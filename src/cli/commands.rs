@@ -6,7 +6,7 @@ use url::Url;
 pub use crate::core::library::AudioFormat;
 
 #[derive(Parser, Debug)]
-#[command(name = "bannedcam")]
+#[command(name = "bannedcamp")]
 #[command(author, version, about = "Bandcamp library downloader", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]

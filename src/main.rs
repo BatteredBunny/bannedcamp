@@ -2,12 +2,12 @@ use anyhow::Result;
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use bannedcam::cli::{
+use bannedcamp::cli::{
     commands::{Cli, Commands},
     completions::generate_completions,
     run::run_download,
 };
-use bannedcam::tui;
+use bannedcamp::tui;
 
 fn setup_logging(verbosity: u8, quiet: bool) {
     let filter = if quiet {

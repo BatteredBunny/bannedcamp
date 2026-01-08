@@ -1,4 +1,4 @@
-# bannedcam
+# bannedcamp
 
 Bandcamp library downloader
 
@@ -7,7 +7,7 @@ Bandcamp library downloader
 Browsing and downloading music from your library in TUI
 
 ```bash
-bannedcam library
+bannedcamp library
 ```
 
 <img width="1278" height="570" alt="image" src="https://github.com/user-attachments/assets/6d9a5b9e-aea7-46e9-996a-fd53a2e62ae6" />
@@ -27,13 +27,13 @@ bannedcam library
 Downloading music in cli
 
 ```bash
-bannedcam download url "https://badmathhk.bandcamp.com/album/missing-narrative"
+bannedcamp download url "https://badmathhk.bandcamp.com/album/missing-narrative"
 ```
 
 ```
 Download items from library
 
-Usage: bannedcam download [OPTIONS] <COMMAND>
+Usage: bannedcamp download [OPTIONS] <COMMAND>
 
 Commands:
   all   Download all items from your library
@@ -55,5 +55,5 @@ Options:
 ## Using with nix
 
 ```bash
-nix run github:BatteredBunny/bannedcam -- library
+nix run github:BatteredBunny/bannedcamp -- library
 ```

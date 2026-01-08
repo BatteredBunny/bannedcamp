@@ -21,7 +21,7 @@
     in
     {
       overlays.default = final: prev: {
-        bannedcam = self.packages.${final.stdenv.system}.bannedcam;
+        bannedcamp = self.packages.${final.stdenv.system}.bannedcamp;
       };
 
       packages = forAllSystems (
@@ -30,7 +30,7 @@
           pkgs = nixpkgsFor.${system};
         in
         rec {
-          bannedcam = default;
+          bannedcamp = default;
           default = pkgs.callPackage ./build.nix { };
         }
       );

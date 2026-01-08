@@ -9,7 +9,7 @@
 }:
 
 rustPlatform.buildRustPackage {
-  pname = "bannedcam";
+  pname = "bannedcamp";
   version = "1.0.0";
 
   src = ./.;
@@ -26,16 +26,16 @@ rustPlatform.buildRustPackage {
   ];
 
   postInstall = lib.optionalString (stdenv.buildPlatform.canExecute stdenv.hostPlatform) ''
-    installShellCompletion --cmd bannedcam \
-      --bash <($out/bin/bannedcam completions bash) \
-      --fish <($out/bin/bannedcam completions fish) \
-      --zsh <($out/bin/bannedcam completions zsh)
+    installShellCompletion --cmd bannedcamp \
+      --bash <($out/bin/bannedcamp completions bash) \
+      --fish <($out/bin/bannedcamp completions fish) \
+      --zsh <($out/bin/bannedcamp completions zsh)
   '';
 
   meta = with lib; {
     description = "Bandcamp library downloader with TUI";
-    homepage = "https://github.com/BatteredBunny/bannedcam";
+    homepage = "https://github.com/BatteredBunny/bannedcamp";
     license = licenses.mit;
-    mainProgram = "bannedcam";
+    mainProgram = "bannedcamp";
   };
 }

@@ -152,7 +152,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bannedcam"
+name = "bannedcamp"
 version = "1.0.0"
 dependencies = [
  "anyhow",

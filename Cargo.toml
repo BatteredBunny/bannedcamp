@@ -1,13 +1,13 @@
 [package]
-name = "bannedcam"
+name = "bannedcamp"
 version = "1.0.0"
 edition = "2024"
 description = "Bandcamp library downloader"
 license = "MIT"
-repository = "https://github.com/BatteredBunny/bannedcam"
+repository = "https://github.com/BatteredBunny/bannedcamp"
 
 [[bin]]
-name = "bannedcam"
+name = "bannedcamp"
 path = "src/main.rs"
 
 [dependencies]
