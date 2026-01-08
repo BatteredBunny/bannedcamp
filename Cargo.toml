@@ -1,0 +1,30 @@
+[package]
+name = "bannedcam"
+version = "1.0.0"
+edition = "2024"
+description = "Bandcamp library downloader"
+license = "MIT"
+repository = "https://github.com/BatteredBunny/bannedcam"
+
+[[bin]]
+name = "bannedcam"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.54", features = ["derive", "env"] }
+clap_complete = "4.5.65"
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+tokio = { version = "1.49.0", features = ["full"] }
+futures = "0.3.31"
+reqwest = { version = "0.13.1", features = ["cookies", "stream", "json", "form"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+chrono = { version = "0.4.42", features = ["serde"] }
+thiserror = "2.0.17"
+anyhow = "1.0.100"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+zip = "7.0.0"
+indicatif = "0.18.3"
+url = "2.5.8"
