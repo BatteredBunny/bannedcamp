@@ -10,13 +10,9 @@ Browsing and downloading music from your library in TUI
 bannedcam library
 ```
 
-## CLI
+<img width="1278" height="570" alt="image" src="https://github.com/user-attachments/assets/6d9a5b9e-aea7-46e9-996a-fd53a2e62ae6" />
 
-Downloading music in cli
-
-```bash
-bannedcam download url "https://badmathhk.bandcamp.com/album/missing-narrative"
-```
+<img width="1278" height="570" alt="image" src="https://github.com/user-attachments/assets/41d4dafb-bd28-4c6c-8ab3-38481a3fc57f" />
 
 ## Finding your identity cookie
 
@@ -25,6 +21,14 @@ bannedcam download url "https://badmathhk.bandcamp.com/album/missing-narrative"
 3. Find bandcamp.com request
 4. Click on the filter headers input and type in "identity"
 5. In the cookie field copy the text after ``identity=xxxxxxxxxx``
+
+## CLI
+
+Downloading music in cli
+
+```bash
+bannedcam download url "https://badmathhk.bandcamp.com/album/missing-narrative"
+```
 
 ```
 Download items from library
