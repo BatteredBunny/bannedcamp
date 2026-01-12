@@ -10,7 +10,7 @@ use tracing::{debug, error, info};
 
 use crate::core::client::BandcampClient;
 use crate::core::library::{AudioFormat, LibraryItem};
-use crate::core::utils::sanitize_filename;
+use crate::core::utils::{sanitize_filename, truncate_str};
 use crate::error::{BandcampError, Result};
 
 pub struct DownloadManager {
@@ -109,11 +109,7 @@ async fn download_item(
             .progress_chars("#>-"),
     );
     let display_name = format!("{} - {}", item.artist, item.title);
-    let short_name = if display_name.len() > 40 {
-        format!("{}...", &display_name[..37])
-    } else {
-        display_name.clone()
-    };
+    let short_name = truncate_str(&display_name, 37);
     pb.set_message(short_name.clone());
 
     // Get download URL with retry for pending encodings (up to 60 seconds of polling)
