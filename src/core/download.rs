@@ -107,20 +107,17 @@ pub async fn download_item<P: DownloadProgressReporter>(
     file.flush()?;
     drop(file);
 
-    // Handle tracks vs albums
+    let filename = sanitize_filename(&item.construct_filename(format));
+
     let output_path = if item.item_type == ItemType::Track {
-        // For tracks, rename the temp file to artist - title.extension
-        let extension = format.extension();
-        let track_filename = format!("{} - {}.{}", item.artist, item.title, extension);
-        let final_path = output_dir.join(sanitize_filename(&track_filename));
+        // For tracks, rename the temp file
+        let final_path = output_dir.join(&filename);
         std::fs::rename(&temp_path, &final_path)?;
         final_path
     } else {
         // For albums and packages, extract the zip archive
         reporter.on_extracting().await;
-
-        let album_dir_name = sanitize_filename(&format!("{} - {}", item.artist, item.title));
-        let extract_path = output_dir.join(&album_dir_name);
+        let extract_path = output_dir.join(&filename);
         std::fs::create_dir_all(&extract_path)?;
 
         extract_zip(&temp_path, &extract_path)?;
@@ -129,7 +126,7 @@ pub async fn download_item<P: DownloadProgressReporter>(
     };
 
     reporter.on_complete().await;
-    info!("Completed: {} - {}", item.artist, item.title);
+    info!("Completed: {filename}");
 
     Ok(output_path)
 }

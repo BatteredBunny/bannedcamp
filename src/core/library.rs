@@ -26,6 +26,26 @@ pub struct LibraryItem {
     pub is_hidden: bool,
 }
 
+impl LibraryItem {
+    /// Constructs the folder or filename it will be downloaded as
+    pub fn construct_filename(&self, format: AudioFormat) -> String {
+        if self.item_type == ItemType::Track {
+            format!(
+                "{} - {}.{}",
+                self.artist,
+                self.title,
+                format.extension()
+            )
+        } else {
+            format!(
+                "{} - {}",
+                self.artist,
+                self.title
+            )
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ItemType {
     Album,
