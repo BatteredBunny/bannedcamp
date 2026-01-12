@@ -15,14 +15,6 @@ bannedcamp library
   <img width="49%" alt="image" src="https://github.com/user-attachments/assets/41d4dafb-bd28-4c6c-8ab3-38481a3fc57f" />
 </p>
 
-## Finding your identity cookie
-
-1. Login to your bandcamp account and open the website.
-2. Open inspect element -> network tab
-3. Find bandcamp.com request
-4. Click on the filter headers input and type in "identity"
-5. In the cookie field copy the text after ``identity=xxxxxxxxxx``
-
 ## CLI
 
 Downloading music in cli
@@ -102,6 +94,13 @@ Options:
 
 </details>
 
+## Finding your identity cookie
+
+1. Login to your bandcamp account and open the website.
+2. Open inspect element -> network tab
+3. Find bandcamp.com request
+4. Click on the filter headers input and type in "identity"
+5. In the cookie field copy the text after ``identity=xxxxxxxxxx``
 
 # Installation
 
