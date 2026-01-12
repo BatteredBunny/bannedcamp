@@ -110,11 +110,13 @@ async fn download_item(
     );
     let display_name = format!("{} - {}", item.artist, item.title);
     let short_name = truncate_str(&display_name, 37);
-    pb.set_message(short_name.clone());
+    pb.set_message(format!("{short_name} (fetching URL)"));
 
     // Get download URL with retry for pending encodings (up to 60 seconds of polling)
     let download_url = client.get_download_url_with_retry(item, format, 30).await?;
     debug!("Download URL: {download_url}");
+
+    pb.set_message(short_name.clone());
 
     let response = client.download(&download_url).await?;
 
