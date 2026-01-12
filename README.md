@@ -41,15 +41,59 @@ Commands:
   help  Print this message or the help of the given subcommand(s)
 
 Options:
-      --cookie <COOKIE>      Bandcamp identity cookie (can also be set via BANDCAMP_COOKIE env vars)
-  -f, --format <FORMAT>      Audio format [default: flac] [possible values: flac, mp3-v0, mp3-320, aac, ogg, alac, wav, aiff]
-  -o, --output <OUTPUT>      Output directory [default: .]
-      --parallel <PARALLEL>  Concurrent downloads [default: 3]
-  -v, --verbose...           Increase verbosity (-v, -vv, -vvv)
-      --dry-run              Show what would be downloaded without downloading
-  -q, --quiet                Suppress output
-      --skip-existing        Skip downloads that already exist
-  -h, --help                 Print help
+      --cookie <COOKIE>
+          Bandcamp identity cookie (can also be set via BANDCAMP_COOKIE env vars)
+
+  -f, --format <FORMAT>
+          Audio format
+
+          [default: flac]
+          [possible values: flac, mp3-v0, mp3-320, aac, ogg, alac, wav, aiff]
+
+  -o, --output <OUTPUT>
+          Output directory
+
+          [default: .]
+
+      --parallel <PARALLEL>
+          Concurrent downloads
+
+          [default: 3]
+
+  -v, --verbose...
+          Increase verbosity (-v, -vv, -vvv)
+
+      --dry-run
+          Show what would be downloaded without downloading
+
+  -q, --quiet
+          Suppress output
+
+      --skip-existing
+          Skip downloads that already exist
+
+      --custom-format <CUSTOM_FORMAT>
+
+               Custom name format for download outputs
+               Note! This does not modify the files inside album packages, only the top-level folder/file name.
+
+               Variables:
+               - {artist}: Artist name
+               - {title}: Item title (track or album name)
+               - {ext}: File extension (e.g., .flac, .mp3), only used for single track downloads, will be empty otherwise. Note that the extension includes the dot!
+               - {id}: Item ID
+
+               Examples:
+               - "{artist} - {title}{ext}" -> "Clark Rainbow - Chainsaw.flac" (when downloading a single track URL https://clarkrainbow.bandcamp.com/track/chainsaw)
+               - "{artist} - {title}" -> "Bad Math - Missing Narrative"
+               - "{artist}/{title}" -> "Bad Math/Missing Narrative"
+
+               Default:
+                 "{artist} - {title}" for albums,
+                 "{artist} - {title}{ext}" for tracks
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## Using with nix

@@ -26,23 +26,33 @@ pub struct LibraryItem {
     pub is_hidden: bool,
 }
 
+/// Custom name format for downloads
+/// {artist}, {title}, {id}, {ext}
+const DEFAULT_ALBUM_FORMAT: &str = "{artist} - {title}";
+const DEFAULT_TRACK_FORMAT: &str = "{artist} - {title}{ext}";
+
 impl LibraryItem {
     /// Constructs the folder or filename it will be downloaded as
-    pub fn construct_filename(&self, format: AudioFormat) -> String {
-        if self.item_type == ItemType::Track {
-            format!(
-                "{} - {}.{}",
-                self.artist,
-                self.title,
-                format.extension()
-            )
+    pub fn construct_filename(&self, format: AudioFormat, custom_format: Option<&str>) -> String {
+        let extension_str = if self.item_type == ItemType::Track {
+            format!(".{}", format.extension())
         } else {
-            format!(
-                "{} - {}",
-                self.artist,
-                self.title
-            )
-        }
+            String::new()
+        };
+
+        let name_format = if let Some(fmt) = custom_format {
+            fmt
+        } else if self.item_type == ItemType::Track {
+            DEFAULT_TRACK_FORMAT
+        } else {
+            DEFAULT_ALBUM_FORMAT
+        };
+
+        name_format
+            .replace("{artist}", &self.artist)
+            .replace("{title}", &self.title)
+            .replace("{ext}", &extension_str)
+            .replace("{id}", &self.id)
     }
 }
 

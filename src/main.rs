@@ -38,25 +38,8 @@ async fn main() -> Result<()> {
             tui::run(output)?;
         }
 
-        Commands::Download {
-            cookie,
-            target,
-            format,
-            output,
-            parallel,
-            dry_run,
-            skip_existing,
-        } => {
-            run_download(
-                cookie,
-                target,
-                format,
-                output,
-                parallel,
-                dry_run,
-                skip_existing,
-            )
-            .await?;
+        Commands::Download { args } => {
+            run_download(args).await?;
         }
 
         Commands::Completions { shell } => {

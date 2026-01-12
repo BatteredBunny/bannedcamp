@@ -25,6 +25,7 @@ pub struct DownloadManager {
     client: Arc<BandcampClient>,
     output_dir: PathBuf,
     format: AudioFormat,
+    name_format: Option<String>,
     parallel: usize,
     progress: MultiProgress,
 }
@@ -34,12 +35,14 @@ impl DownloadManager {
         client: BandcampClient,
         output_dir: PathBuf,
         format: AudioFormat,
+        name_format: Option<String>,
         parallel: usize,
     ) -> Self {
         Self {
             client: Arc::new(client),
             output_dir,
             format,
+            name_format,
             parallel,
             progress: MultiProgress::new(),
         }
@@ -67,9 +70,10 @@ impl DownloadManager {
             let progress = self.progress.clone();
             let header_pb = header_pb.clone();
             let remaining = remaining.clone();
+            let name_format = self.name_format.clone();
 
             let handle = tokio::spawn(async move {
-                let result = cli_download(&client, &item, &output_dir, format, &progress).await;
+                let result = cli_download(&client, &item, &output_dir, format, name_format.as_deref(), &progress).await;
                 let new_remaining = remaining.fetch_sub(1, Ordering::SeqCst) - 1;
                 header_pb.set_message(format!("{new_remaining} items remaining"));
                 drop(permit);
@@ -178,8 +182,9 @@ async fn cli_download(
     item: &LibraryItem,
     output_dir: &PathBuf,
     format: AudioFormat,
+    name_format: Option<&str>,
     progress: &MultiProgress,
 ) -> Result<PathBuf> {
     let reporter = CliProgressReporter::new(progress, &item.artist, &item.title);
-    download_item(client, item, output_dir, format, reporter).await
+    download_item(client, item, output_dir, format, name_format, reporter).await
 }

@@ -63,6 +63,7 @@ pub async fn download_item<P: DownloadProgressReporter>(
     item: &LibraryItem,
     output_dir: &PathBuf,
     format: AudioFormat,
+    name_format: Option<&str>,
     reporter: P,
 ) -> Result<PathBuf> {
     info!("Downloading: {} - {}", item.artist, item.title);
@@ -107,7 +108,7 @@ pub async fn download_item<P: DownloadProgressReporter>(
     file.flush()?;
     drop(file);
 
-    let filename = sanitize_filename(&item.construct_filename(format));
+    let filename = sanitize_filename(&item.construct_filename(format, name_format));
 
     let output_path = if item.item_type == ItemType::Track {
         // For tracks, rename the temp file

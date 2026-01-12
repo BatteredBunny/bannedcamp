@@ -1,27 +1,19 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::info;
 
-use crate::cli::commands::{BandcampUrl, DownloadTarget};
+use crate::cli::commands::{BandcampUrl, DownloadArgs, DownloadTarget};
 use crate::cli::download::DownloadManager;
 use crate::core::client::BandcampClient;
-use crate::core::library::{AudioFormat, LibraryItem};
+use crate::core::library::LibraryItem;
 use crate::core::utils::sanitize_filename;
 
-pub async fn run_download(
-    cookie: Option<String>,
-    target: DownloadTarget,
-    format: AudioFormat,
-    output: PathBuf,
-    parallel: u8,
-    dry_run: bool,
-    skip_existing: bool,
-) -> Result<()> {
+pub async fn run_download(args: DownloadArgs) -> Result<()> {
     // Fallback to looking for BANDCAMP_COOKIE env variable
-    let cookie = cookie
+    let cookie = args
+        .cookie
         .or_else(|| std::env::var("BANDCAMP_COOKIE").ok())
         .ok_or_else(|| {
             anyhow::anyhow!("No cookie provided. Set --cookie flag, BANDCAMP_COOKIE env var")
@@ -48,7 +40,7 @@ pub async fn run_download(
 
     spinner.finish_and_clear();
 
-    let items_to_download = match &target {
+    let items_to_download = match &args.target {
         DownloadTarget::All => items,
         DownloadTarget::Url { urls } => {
             info!("Filtering by {} URL(s)", urls.len());
@@ -61,12 +53,14 @@ pub async fn run_download(
     };
 
     // Filter out existing downloads if skip_existing is set
-    let items_to_download = if skip_existing {
+    let items_to_download = if args.skip_existing {
         let before_count = items_to_download.len();
         let filtered: Vec<_> = items_to_download
             .into_iter()
             .filter(|item| {
-                let path = output.join(sanitize_filename(&item.construct_filename(format)));
+                let path = args.output.join(sanitize_filename(
+                    &item.construct_filename(args.format, args.custom_format.as_deref()),
+                ));
                 !path.exists()
             })
             .collect();
@@ -80,16 +74,16 @@ pub async fn run_download(
     };
 
     if items_to_download.is_empty() {
-        match &target {
+        match &args.target {
             DownloadTarget::All => {
-                if skip_existing {
+                if args.skip_existing {
                     println!("All items already downloaded");
                 } else {
                     println!("No items found in library");
                 }
             }
             DownloadTarget::Url { urls } => {
-                if skip_existing {
+                if args.skip_existing {
                     println!("All matching items already downloaded");
                 } else {
                     println!("No items found matching URL(s): {}", urls.join(", "));
@@ -99,14 +93,20 @@ pub async fn run_download(
         return Ok(());
     }
 
-    if dry_run {
+    if args.dry_run {
         println!("Would download {} items.", items_to_download.len());
         for item in &items_to_download {
             let dir_name = sanitize_filename(&format!("{} - {}", item.artist, item.title));
-            println!("{}", output.join(dir_name).display());
+            println!("{}", args.output.join(dir_name).display());
         }
     } else {
-        let manager = DownloadManager::new(client, output, format, parallel as usize);
+        let manager = DownloadManager::new(
+            client,
+            args.output,
+            args.format,
+            args.custom_format,
+            args.parallel as usize,
+        );
 
         let summary = manager.download_items(items_to_download).await?;
 

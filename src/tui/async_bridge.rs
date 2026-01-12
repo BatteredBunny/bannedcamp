@@ -273,7 +273,7 @@ async fn tui_download(
 
     let reporter = TuiProgressReporter::new(item_id.to_string(), response_tx.clone());
 
-    let result = download_item(&client, &item, &output_dir, format, reporter)
+    let result = download_item(&client, &item, &output_dir, format, None, reporter)
         .await
         .map_err(|e| e.to_string());
 
