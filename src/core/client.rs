@@ -320,6 +320,8 @@ impl BandcampClient {
 
             if response.status() == 401 {
                 return Err(BandcampError::SessionExpired);
+            } else if response.status() == 503 {
+                return Err(BandcampError::SiteDown);
             }
 
             if !response.status().is_success() {
@@ -470,6 +472,8 @@ impl BandcampClient {
 
         if response.status() == 401 {
             return Err(BandcampError::SessionExpired);
+        } else if response.status() == 503 {
+            return Err(BandcampError::SiteDown);
         }
 
         if !response.status().is_success() {

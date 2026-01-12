@@ -25,6 +25,9 @@ pub enum BandcampError {
 
     #[error("Parse error: {0}")]
     ParseError(String),
+
+    #[error("Bandcamp is currently down")]
+    SiteDown,
 }
 
 pub type Result<T> = std::result::Result<T, BandcampError>;
