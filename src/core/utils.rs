@@ -1,15 +1,3 @@
-pub fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            '\0' => '_',
-            c => c,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
-}
-
 pub fn format_bytes(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;

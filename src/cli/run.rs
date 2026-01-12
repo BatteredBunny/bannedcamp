@@ -8,7 +8,6 @@ use crate::cli::commands::{BandcampUrl, DownloadArgs, DownloadTarget};
 use crate::cli::download::DownloadManager;
 use crate::core::client::BandcampClient;
 use crate::core::library::LibraryItem;
-use crate::core::utils::sanitize_filename;
 
 pub async fn run_download(args: DownloadArgs) -> Result<()> {
     // Fallback to looking for BANDCAMP_COOKIE env variable
@@ -58,9 +57,9 @@ pub async fn run_download(args: DownloadArgs) -> Result<()> {
         let filtered: Vec<_> = items_to_download
             .into_iter()
             .filter(|item| {
-                let path = args.output.join(sanitize_filename(
-                    &item.construct_filename(args.format, args.custom_format.as_deref()),
-                ));
+                let path = args
+                    .output
+                    .join(item.construct_filename(args.format, args.custom_format.as_deref()));
                 !path.exists()
             })
             .collect();
@@ -96,8 +95,8 @@ pub async fn run_download(args: DownloadArgs) -> Result<()> {
     if args.dry_run {
         println!("Would download {} items.", items_to_download.len());
         for item in &items_to_download {
-            let dir_name = sanitize_filename(&format!("{} - {}", item.artist, item.title));
-            println!("{}", args.output.join(dir_name).display());
+            let path_name = item.construct_filename(args.format, args.custom_format.as_deref());
+            println!("{}", args.output.join(path_name).display());
         }
     } else {
         let manager = DownloadManager::new(

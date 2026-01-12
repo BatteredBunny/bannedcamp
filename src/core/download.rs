@@ -8,7 +8,6 @@ use tracing::{debug, info};
 
 use crate::core::client::BandcampClient;
 use crate::core::library::{AudioFormat, ItemType, LibraryItem};
-use crate::core::utils::sanitize_filename;
 use crate::error::{BandcampError, Result};
 
 /// Summary of download results
@@ -108,17 +107,23 @@ pub async fn download_item<P: DownloadProgressReporter>(
     file.flush()?;
     drop(file);
 
-    let filename = sanitize_filename(&item.construct_filename(format, name_format));
+    let filename = &item.construct_filename(format, name_format);
 
     let output_path = if item.item_type == ItemType::Track {
         // For tracks, rename the temp file
-        let final_path = output_dir.join(&filename);
+        let final_path = output_dir.join(filename);
+
+        // Create parent directory for formats with folder paths in them
+        if let Some(parent) = final_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
         std::fs::rename(&temp_path, &final_path)?;
         final_path
     } else {
         // For albums and packages, extract the zip archive
         reporter.on_extracting().await;
-        let extract_path = output_dir.join(&filename);
+        let extract_path = output_dir.join(filename);
         std::fs::create_dir_all(&extract_path)?;
 
         extract_zip(&temp_path, &extract_path)?;
