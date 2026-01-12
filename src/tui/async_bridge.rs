@@ -1,20 +1,16 @@
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
-use futures::StreamExt;
 use tokio::sync::{Semaphore, mpsc};
 use tracing::debug;
 
 use crate::core::auth::Credentials;
 use crate::core::client::BandcampClient;
-use crate::core::download::extract_zip;
+use crate::core::download::{DownloadProgressReporter, download_item};
 use crate::core::library::{AudioFormat, LibraryItem};
-use crate::core::utils::sanitize_filename;
 use crate::tui::app::MAX_CONCURRENT_DOWNLOADS;
-
-type DownloadResult = Result<PathBuf, String>;
 
 /// Messages sent from the TUI to the async runtime
 #[derive(Debug)]
@@ -170,8 +166,7 @@ impl AsyncBridge {
             let output_dir = output_dir.clone();
 
             let handle = tokio::spawn(async move {
-                download_single_item(client, response_tx, item, item_index, format, output_dir)
-                    .await;
+                tui_download(client, response_tx, item, item_index, format, output_dir).await;
                 drop(permit);
             });
 
@@ -190,7 +185,76 @@ impl AsyncBridge {
     }
 }
 
-async fn download_single_item(
+pub struct TuiProgressReporter {
+    item_id: String,
+    response_tx: mpsc::Sender<AsyncResponse>,
+    last_progress: std::sync::Mutex<Instant>,
+}
+
+impl TuiProgressReporter {
+    pub fn new(item_id: String, response_tx: mpsc::Sender<AsyncResponse>) -> Self {
+        Self {
+            item_id,
+            response_tx,
+            last_progress: std::sync::Mutex::new(Instant::now()),
+        }
+    }
+}
+
+impl DownloadProgressReporter for TuiProgressReporter {
+    fn on_start(&self, _total_size: Option<u64>) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {})
+    }
+
+    fn on_fetching_url(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {})
+    }
+
+    fn on_progress(
+        &self,
+        downloaded: u64,
+        total: Option<u64>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {
+            // Throttle updates to every 100ms
+            let should_send = {
+                let mut last = self.last_progress.lock().unwrap();
+                if last.elapsed().as_millis() >= 100 {
+                    *last = Instant::now();
+                    true
+                } else {
+                    false
+                }
+            };
+
+            if should_send {
+                let _ = self
+                    .response_tx
+                    .send(AsyncResponse::DownloadProgress {
+                        item_id: self.item_id.clone(),
+                        downloaded,
+                        total,
+                    })
+                    .await;
+            }
+        })
+    }
+
+    fn on_extracting(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {})
+    }
+
+    fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {})
+    }
+
+    fn on_error(&self, _error: &str) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(async move {})
+    }
+}
+
+// Usage in TUI:
+async fn tui_download(
     client: Arc<BandcampClient>,
     response_tx: mpsc::Sender<AsyncResponse>,
     item: LibraryItem,
@@ -207,7 +271,11 @@ async fn download_single_item(
         })
         .await;
 
-    let result = do_download(&client, &response_tx, &item, &item_id, format, &output_dir).await;
+    let reporter = TuiProgressReporter::new(item_id.to_string(), response_tx.clone());
+
+    let result = download_item(&client, &item, &output_dir, format, reporter)
+        .await
+        .map_err(|e| e.to_string());
 
     let _ = response_tx
         .send(AsyncResponse::ItemDownloadComplete {
@@ -216,67 +284,4 @@ async fn download_single_item(
             result,
         })
         .await;
-}
-
-async fn do_download(
-    client: &BandcampClient,
-    response_tx: &mpsc::Sender<AsyncResponse>,
-    item: &LibraryItem,
-    item_id: &str,
-    format: AudioFormat,
-    output_dir: &Path,
-) -> DownloadResult {
-    let download_url = client
-        .get_download_url_with_retry(item, format, 30)
-        .await
-        .map_err(|e| format!("Failed to get download URL: {e}"))?;
-
-    let response = client
-        .download(&download_url)
-        .await
-        .map_err(|e| format!("Download failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("HTTP error: {}", response.status()));
-    }
-
-    let total = response.content_length();
-
-    let album_dir = sanitize_filename(&format!("{} - {}", item.artist, item.title));
-    let extract_dir = output_dir.join(&album_dir);
-    std::fs::create_dir_all(&extract_dir)
-        .map_err(|e| format!("Failed to create directory: {e}"))?;
-
-    let temp_path = output_dir.join(format!(".{}.tmp", item.id));
-    let mut file = std::fs::File::create(&temp_path)
-        .map_err(|e| format!("Failed to create temp file: {e}"))?;
-
-    let mut downloaded: u64 = 0;
-    let mut stream = response.bytes_stream();
-    let mut last_progress = Instant::now();
-
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Stream error: {e}"))?;
-        file.write_all(&chunk)
-            .map_err(|e| format!("Write error: {e}"))?;
-        downloaded += chunk.len() as u64;
-
-        if last_progress.elapsed().as_millis() >= 100 {
-            let _ = response_tx
-                .send(AsyncResponse::DownloadProgress {
-                    item_id: item_id.to_string(),
-                    downloaded,
-                    total,
-                })
-                .await;
-            last_progress = Instant::now();
-        }
-    }
-
-    drop(file);
-
-    extract_zip(&temp_path, &extract_dir).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_file(&temp_path); // TODO: handle error
-
-    Ok(extract_dir)
 }

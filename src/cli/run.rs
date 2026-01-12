@@ -6,9 +6,9 @@ use indicatif::{ProgressBar, ProgressStyle};
 use tracing::info;
 
 use crate::cli::commands::{BandcampUrl, DownloadTarget};
+use crate::cli::download::DownloadManager;
 use crate::core::client::BandcampClient;
-use crate::core::download::DownloadManager;
-use crate::core::library::{AudioFormat, LibraryItem};
+use crate::core::library::{AudioFormat, ItemType, LibraryItem};
 use crate::core::utils::sanitize_filename;
 
 pub async fn run_download(
@@ -66,14 +66,25 @@ pub async fn run_download(
         let filtered: Vec<_> = items_to_download
             .into_iter()
             .filter(|item| {
-                let dir_name = sanitize_filename(&format!("{} - {}", item.artist, item.title));
-                let dir_path = output.join(&dir_name);
-                !dir_path.exists()
+                if item.item_type == ItemType::Track {
+                    let file_name = sanitize_filename(&format!(
+                        "{} - {}.{}",
+                        item.artist,
+                        item.title,
+                        format.extension()
+                    ));
+                    let file_path = output.join(&file_name);
+                    !file_path.exists()
+                } else {
+                    let dir_name = sanitize_filename(&format!("{} - {}", item.artist, item.title));
+                    let dir_path = output.join(&dir_name);
+                    !dir_path.exists()
+                }
             })
             .collect();
         let skipped = before_count - filtered.len();
         if skipped > 0 {
-            info!("Skipping {} existing downloads", skipped);
+            info!("Skipping {skipped} existing downloads");
         }
         filtered
     } else {
