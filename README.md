@@ -10,9 +10,10 @@ Browsing and downloading music from your library in TUI
 bannedcamp library
 ```
 
-<img width="1278" height="570" alt="image" src="https://github.com/user-attachments/assets/6d9a5b9e-aea7-46e9-996a-fd53a2e62ae6" />
-
-<img width="1278" height="570" alt="image" src="https://github.com/user-attachments/assets/41d4dafb-bd28-4c6c-8ab3-38481a3fc57f" />
+<p>
+  <img width="49%" alt="image" src="https://github.com/user-attachments/assets/6d9a5b9e-aea7-46e9-996a-fd53a2e62ae6" />
+  <img width="49%" alt="image" src="https://github.com/user-attachments/assets/41d4dafb-bd28-4c6c-8ab3-38481a3fc57f" />
+</p>
 
 ## Finding your identity cookie
 
@@ -29,6 +30,9 @@ Downloading music in cli
 ```bash
 bannedcamp download url "https://badmathhk.bandcamp.com/album/missing-narrative"
 ```
+
+<details>
+<summary><b>CLI flags reference</b></summary>
 
 ```
 Download items from library
@@ -96,8 +100,47 @@ Options:
           Print help (see a summary with '-h')
 ```
 
-## Using with nix
+</details>
+
+
+# Installation
+
+## Binary Release
+
+Download the latest release binary from the [releases page](https://github.com/BatteredBunny/bannedcamp/releases).
+
+## Using with Nix
+
+### Quick Run (No Installation)
+
+You can run bannedcamp directly without installing:
 
 ```bash
 nix run github:BatteredBunny/bannedcamp -- library
 ```
+
+### System Installation via Flakes
+
+<details>
+<summary><b>NixOS Configuration</b></summary>
+
+
+```nix
+# flake.nix
+inputs = {
+    hostling.url = "github:BatteredBunny/hostling";
+};
+```
+
+```nix
+# configuration.nix
+nixpkgs.overlays = [
+    inputs.bannedcamp.overlays.default
+];
+
+environment.systemPackages = with pkgs; [
+    bannedcamp
+];
+```
+
+</details>
