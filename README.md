@@ -127,7 +127,7 @@ nix run github:BatteredBunny/bannedcamp -- library
 ```nix
 # flake.nix
 inputs = {
-    hostling.url = "github:BatteredBunny/hostling";
+    bannedcamp.url = "github:BatteredBunny/bannedcamp";
 };
 ```
 
