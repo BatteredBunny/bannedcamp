@@ -1,0 +1,39 @@
+name: Build and Release Binary
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    name: Build x86_64 Linux Binary
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build binary
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Prepare binary
+        run: |
+          strip target/x86_64-unknown-linux-gnu/release/bannedcamp
+          mv target/x86_64-unknown-linux-gnu/release/bannedcamp bannedcamp-x86_64-linux
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: bannedcamp-x86_64-linux
+          generate_release_notes: true
