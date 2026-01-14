@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use crate::core::auth::Credentials;
@@ -11,7 +13,7 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/201001
 
 /// Response from the collection_items API endpoint
 #[derive(Debug, Deserialize)]
-struct CollectionResponse {
+pub struct CollectionResponse {
     items: Vec<CollectionItem>,
     more_available: bool,
     last_token: Option<String>,
@@ -22,72 +24,70 @@ struct CollectionResponse {
 
 /// URL hints from collection item
 #[derive(Debug, Deserialize, Default)]
-#[allow(dead_code)]
 struct UrlHints {
     subdomain: Option<String>,
-    #[serde(default)]
-    custom_domain: Option<String>,
     slug: Option<String>,
-    item_type: Option<String>,
 }
 
 /// Individual item from collection response
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct CollectionItem {
-    sale_item_id: u64,
-    sale_item_type: String,
-    band_name: String,
-    item_title: String,
-    item_id: u64,
     band_id: u64,
-    #[serde(default)]
-    item_art_id: Option<u64>,
-    #[serde(default)]
-    is_preorder: bool,
+
+    sale_item_id: u64,
+    sale_item_type: String, // a, t, p
+
+    tralbum_type: CollectionSummaryItemType,
+
     #[serde(default)]
     hidden: Option<bool>,
-    token: String,
-    tralbum_type: String,
     #[serde(default)]
     url_hints: Option<UrlHints>,
+    item_title: String,
     #[serde(default)]
     item_url: Option<String>,
-}
-
-/// Page data embedded in HTML containing fan_id and other info
-#[derive(Debug, Deserialize)]
-struct PageData {
-    fan_data: FanData,
-}
-
-#[derive(Debug, Deserialize)]
-struct FanData {
-    fan_id: u64,
-}
-
-/// Download page data (for future use)
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DownloadPageData {
-    download_items: Vec<DownloadItem>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DownloadItem {
-    downloads: std::collections::HashMap<String, DownloadFormat>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct DownloadFormat {
-    url: String,
+    #[serde(default)]
+    band_name: String,
+    #[serde(default)]
+    is_preorder: bool,
 }
 
 pub struct BandcampClient {
     http: reqwest::Client,
     credentials: Option<Credentials>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CollectionSummary {
+    pub fan_id: u64,
+    pub collection_summary: CollectionSummaryInternal,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CollectionSummaryInternal {
+    pub fan_id: u64,
+    pub username: String,
+    pub url: String,
+
+    pub tralbum_lookup: std::collections::HashMap<String, CollectionSummaryItem>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CollectionSummaryItem {
+    pub item_type: CollectionSummaryItemType, // a, t, p
+    pub item_id: u64,
+    pub band_id: u64,
+    pub purchased: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum CollectionSummaryItemType {
+    #[serde(rename = "a")]
+    Album, // a
+    #[serde(rename = "t")]
+    Track, // t
+    #[serde(rename = "p")]
+    Package, // p
 }
 
 impl BandcampClient {
@@ -100,17 +100,6 @@ impl BandcampClient {
                 .expect("Failed to create HTTP client"),
             credentials: None,
         }
-    }
-
-    /// Make an authenticated GET request for downloading files
-    pub async fn download(&self, url: &str) -> Result<reqwest::Response> {
-        let response = self
-            .http
-            .get(url)
-            .headers(self.auth_headers()?)
-            .send()
-            .await?;
-        Ok(response)
     }
 
     fn auth_headers(&self) -> Result<HeaderMap> {
@@ -129,10 +118,10 @@ impl BandcampClient {
         Ok(headers)
     }
 
-    /// Validate a session cookie by attempting to fetch the user's fan ID
-    pub async fn validate_cookie(&mut self, identity_cookie: &str) -> Result<Credentials> {
-        info!("Validating session cookie...");
-
+    pub async fn fetch_collection_summary(
+        &self,
+        identity_cookie: &str,
+    ) -> Result<CollectionSummary> {
         let mut headers = HeaderMap::new();
         let cookie_value = format!("identity={identity_cookie}");
         headers.insert(
@@ -141,7 +130,6 @@ impl BandcampClient {
                 .map_err(|e| BandcampError::AuthError(e.to_string()))?,
         );
 
-        // Try fetching the fan page / collection summary which should have fan_id
         let response = self
             .http
             .get(format!("{BANDCAMP_BASE}/api/fan/2/collection_summary"))
@@ -150,133 +138,62 @@ impl BandcampClient {
             .await?;
 
         if response.status().is_success() {
-            // Try to extract fan_id from JSON API response
-            let text = response.text().await?;
-            if let Some(fan_id) = self.extract_fan_id_from_json(&text) {
-                info!("Cookie validated via API, fan_id: {fan_id}");
-                let mut credentials = Credentials::new(identity_cookie.to_string());
-                credentials.fan_id = Some(fan_id.to_string());
-                self.credentials = Some(credentials.clone());
-                return Ok(credentials);
-            }
+            Ok(response.json().await?)
+        } else {
+            Err(BandcampError::NetworkError(
+                response.error_for_status().unwrap_err(),
+            ))
         }
+    }
 
-        // Fallback: try the settings page
+    pub async fn collection_items(
+        &self,
+        fan_id: u64,
+        older_than_token: &str,
+    ) -> Result<CollectionResponse> {
+        let url = format!("{BANDCAMP_BASE}/api/fancollection/1/collection_items");
+
+        let body = serde_json::json!({
+            "fan_id": fan_id,
+            "count": 100,
+            "older_than_token": older_than_token
+        });
+
+        debug!("Fetching collection page: {url} with body: {body:?}");
+
         let response = self
             .http
-            .get(format!("{BANDCAMP_BASE}/settings"))
-            .headers(headers)
+            .post(&url)
+            .headers(self.auth_headers()?)
+            .json(&body)
             .send()
             .await?;
 
-        if !response.status().is_success() {
-            return Err(BandcampError::InvalidCredentials);
+        if response.status() == 401 {
+            Err(BandcampError::SessionExpired)
+        } else if response.status() == 503 {
+            Err(BandcampError::SiteDown)
+        } else if !response.status().is_success() {
+            Err(BandcampError::NetworkError(
+                response.error_for_status().unwrap_err(),
+            ))
+        } else {
+            Ok(response.json().await?)
         }
+    }
 
-        let html = response.text().await?;
+    /// Validate a session cookie by attempting to fetch the user's fan ID
+    pub async fn validate_cookie(&mut self, identity_cookie: &str) -> Result<Credentials> {
+        info!("Validating session cookie...");
 
-        // Extract fan_id from the page data
-        let fan_id = self.extract_fan_id(&html)?;
+        let summary = self.fetch_collection_summary(identity_cookie).await?;
 
-        info!("Cookie validated, fan_id: {fan_id}");
+        info!("Cookie validated, fan_id: {}", summary.fan_id);
 
-        let mut credentials = Credentials::new(identity_cookie.to_string());
-        credentials.fan_id = Some(fan_id.to_string());
+        let credentials = Credentials::new(identity_cookie.to_string(), summary.fan_id);
 
         self.credentials = Some(credentials.clone());
         Ok(credentials)
-    }
-
-    /// Extract fan_id from JSON response
-    fn extract_fan_id_from_json(&self, json: &str) -> Option<u64> {
-        // Look for "fan_id":NUMBER pattern
-        if let Some(pos) = json.find("\"fan_id\":") {
-            let start = pos + 9;
-            let end = json[start..]
-                .find(|c: char| !c.is_ascii_digit())
-                .map(|p| start + p)
-                .unwrap_or(start);
-            if end > start
-                && let Ok(fan_id) = json[start..end].parse::<u64>()
-            {
-                return Some(fan_id);
-            }
-        }
-        None
-    }
-
-    /// Extract fan_id from HTML page data
-    fn extract_fan_id(&self, html: &str) -> Result<u64> {
-        // Try multiple patterns to find fan_id
-
-        // Pattern 1: Look for "fan_id":NUMBER directly in HTML
-        if let Some(pos) = html.find("\"fan_id\":") {
-            let start = pos + 9; // len of "\"fan_id\":"
-            let end = html[start..]
-                .find(|c: char| !c.is_ascii_digit())
-                .map(|p| start + p)
-                .unwrap_or(start);
-            if end > start
-                && let Ok(fan_id) = html[start..end].parse::<u64>()
-            {
-                debug!("Found fan_id via direct pattern: {fan_id}");
-                return Ok(fan_id);
-            }
-        }
-
-        // Pattern 2: Look for data-blob attribute
-        if let Some(data_blob_start) = html
-            .find("data-blob=\"")
-            .or_else(|| html.find("data-blob='"))
-        {
-            let quote_char = if html[data_blob_start..].starts_with("data-blob=\"") {
-                '"'
-            } else {
-                '\''
-            };
-
-            let start = data_blob_start + 11; // len of "data-blob=\""
-            if let Some(end_offset) = html[start..].find(quote_char) {
-                let end = start + end_offset;
-                let data_blob = &html[start..end];
-
-                // Unescape HTML entities
-                let unescaped = data_blob
-                    .replace("&quot;", "\"")
-                    .replace("&amp;", "&")
-                    .replace("&lt;", "<")
-                    .replace("&gt;", ">")
-                    .replace("&#39;", "'");
-
-                // Try to parse as PageData
-                if let Ok(page_data) = serde_json::from_str::<PageData>(&unescaped) {
-                    debug!(
-                        "Found fan_id via data-blob PageData: {}",
-                        page_data.fan_data.fan_id
-                    );
-                    return Ok(page_data.fan_data.fan_id);
-                }
-
-                // Try to extract fan_id from the unescaped JSON directly
-                if let Some(pos) = unescaped.find("\"fan_id\":") {
-                    let id_start = pos + 9;
-                    let id_end = unescaped[id_start..]
-                        .find(|c: char| !c.is_ascii_digit())
-                        .map(|p| id_start + p)
-                        .unwrap_or(id_start);
-                    if id_end > id_start
-                        && let Ok(fan_id) = unescaped[id_start..id_end].parse::<u64>()
-                    {
-                        debug!("Found fan_id via data-blob direct: {}", fan_id);
-                        return Ok(fan_id);
-                    }
-                }
-            }
-        }
-
-        Err(BandcampError::ParseError(
-            "Could not find fan_id in page".into(),
-        ))
     }
 
     /// Fetch the user's library collection
@@ -286,59 +203,15 @@ impl BandcampClient {
             .as_ref()
             .ok_or(BandcampError::NotLoggedIn)?;
 
-        let fan_id = creds
-            .fan_id
-            .as_ref()
-            .ok_or_else(|| BandcampError::AuthError("No fan_id in credentials".into()))?;
+        let fan_id = creds.fan_id;
 
         info!("Fetching collection for fan_id: {fan_id}");
 
-        let mut all_items = Vec::new();
-        let mut seen_ids = std::collections::HashSet::new();
-        // Use a far-future timestamp for the first request (this gets items before this date)
-        let mut older_than_token: String =
-            format!("{}::a::", chrono::Utc::now().timestamp() + 86400);
+        let mut token: String = format!("{}::a::", chrono::Utc::now().timestamp() + 86400);
+        let mut items: HashMap<u64, LibraryItem> = HashMap::new();
 
         loop {
-            let url = format!("{BANDCAMP_BASE}/api/fancollection/1/collection_items");
-
-            let body = serde_json::json!({
-                "fan_id": fan_id.parse::<u64>().unwrap_or(0),
-                "count": 100,
-                "older_than_token": older_than_token
-            });
-
-            debug!("Fetching collection page: {url} with body: {body:?}");
-
-            let response = self
-                .http
-                .post(&url)
-                .headers(self.auth_headers()?)
-                .json(&body)
-                .send()
-                .await?;
-
-            if response.status() == 401 {
-                return Err(BandcampError::SessionExpired);
-            } else if response.status() == 503 {
-                return Err(BandcampError::SiteDown);
-            }
-
-            if !response.status().is_success() {
-                return Err(BandcampError::NetworkError(
-                    response.error_for_status().unwrap_err(),
-                ));
-            }
-
-            let text = response.text().await?;
-            debug!("Collection API response: {}", &text[..text.len().min(2000)]);
-
-            let collection: CollectionResponse = serde_json::from_str(&text).map_err(|e| {
-                BandcampError::ParseError(format!(
-                    "Failed to parse collection response: {e} - Response: {}",
-                    &text[..text.len().min(500)]
-                ))
-            })?;
+            let collection = self.collection_items(fan_id, &token).await?;
 
             debug!(
                 "Fetched {} items, more_available: {}",
@@ -346,51 +219,39 @@ impl BandcampClient {
                 collection.more_available
             );
 
-            let mut duplicates_skipped = 0;
             for item in collection.items {
-                // Deduplicate by sale_item_id to prevent pagination overlap issues
-                if seen_ids.insert(item.sale_item_id) {
-                    all_items.push(self.convert_collection_item(item, &collection.redownload_urls));
-                } else {
-                    duplicates_skipped += 1;
-                }
-            }
-
-            if duplicates_skipped > 0 {
-                debug!("Skipped {duplicates_skipped} duplicate items in this page",);
+                items.insert(
+                    item.sale_item_id,
+                    self.convert_collection_item(item, &collection.redownload_urls),
+                );
             }
 
             if !collection.more_available {
                 break;
             }
 
-            if let Some(token) = collection.last_token {
-                older_than_token = token;
+            if let Some(new_token) = collection.last_token {
+                token = new_token;
             } else {
                 break;
             }
         }
 
-        info!("Fetched {} total items from collection", all_items.len());
-        Ok(all_items)
+        info!("Fetched {} total items from collection", items.len());
+        Ok(items.into_values().collect())
     }
 
     /// Convert API collection item to our LibraryItem type
     fn convert_collection_item(
         &self,
         item: CollectionItem,
-        redownload_urls: &std::collections::HashMap<String, String>,
+        redownload_urls: &HashMap<String, String>,
     ) -> LibraryItem {
-        let item_type = match item.tralbum_type.as_str() {
-            "a" => ItemType::Album,
-            "t" => ItemType::Track,
-            "p" => ItemType::Package,
-            _ => ItemType::Album, // Default to album
+        let item_type = match item.tralbum_type {
+            CollectionSummaryItemType::Album => ItemType::Album,
+            CollectionSummaryItemType::Track => ItemType::Track,
+            CollectionSummaryItemType::Package => ItemType::Package,
         };
-
-        let artwork_url = item
-            .item_art_id
-            .map(|id| format!("https://f4.bcbits.com/img/a{}_10.jpg", id));
 
         // Extract subdomain and slug from url_hints
         let (artist_subdomain, slug) = item
@@ -427,8 +288,6 @@ impl BandcampClient {
             artist_subdomain,
             slug,
             item_url: item.item_url,
-            purchase_date: chrono::Utc::now(), // API doesn't return this, would need to parse token
-            artwork_url,
             download_url,
             available_formats: vec![
                 AudioFormat::Flac,
@@ -443,6 +302,17 @@ impl BandcampClient {
             is_preorder: item.is_preorder,
             is_hidden: item.hidden.unwrap_or(false),
         }
+    }
+
+    /// Make an authenticated GET request for downloading files
+    pub async fn download(&self, url: &str) -> Result<reqwest::Response> {
+        let response = self
+            .http
+            .get(url)
+            .headers(self.auth_headers()?)
+            .send()
+            .await?;
+        Ok(response)
     }
 
     /// Get download URL with retry logic for pending encodings
@@ -612,12 +482,8 @@ impl BandcampClient {
             return Ok(url);
         }
 
-        // Debug: log what we found in the page
-        self.log_page_debug_info(html);
-
         Err(BandcampError::ParseError(format!(
-            "Could not find download URL for format '{}' in page",
-            format_str
+            "Could not find download URL for format '{format_str}' in page",
         )))
     }
 
@@ -725,13 +591,10 @@ impl BandcampClient {
     /// Extract download URL using direct pattern matching
     fn extract_direct_pattern(&self, html: &str, format: &str) -> Result<Option<String>> {
         // Look for "format": { ... "url": "..." } pattern
-        let search_pattern = format!("\"{}\":", format);
+        let search_pattern = format!("\"{format}\":");
 
         if let Some(format_pos) = html.find(&search_pattern) {
-            debug!(
-                "Found format pattern '{}' at position {}",
-                search_pattern, format_pos
-            );
+            debug!("Found format pattern '{search_pattern}' at position {format_pos}",);
 
             // Look for "url" field after this
             let search_area = &html[format_pos..html.len().min(format_pos + 1000)];
@@ -741,8 +604,8 @@ impl BandcampClient {
                     let actual_start = url_start + url_pattern.len();
                     if let Some(url_end) = search_area[actual_start..].find('"') {
                         let url = &search_area[actual_start..actual_start + url_end];
-                        let url = url.replace("\\u0026", "&").replace("\\/", "/");
-                        debug!("Found URL via direct pattern: {}", url);
+                        let url = self.unescape_html(url);
+                        debug!("Found URL via direct pattern: {url}");
                         return Ok(Some(url));
                     }
                 }
@@ -823,7 +686,7 @@ impl BandcampClient {
                 let url_end = after[url_content_start..].find('"')?;
                 let url = &after[url_content_start..url_content_start + url_end];
                 debug!("Found URL via pattern matching in JSON string");
-                return Some(url.replace("\\u0026", "&").replace("\\/", "/"));
+                return Some(self.unescape_html(url));
             }
         }
 
@@ -875,59 +738,6 @@ impl BandcampClient {
             .replace("&#x2F;", "/")
             .replace("\\u0026", "&")
             .replace("\\/", "/")
-    }
-
-    /// Log debug information about the page for troubleshooting
-    fn log_page_debug_info(&self, html: &str) {
-        // Log page title
-        if let Some(title_pos) = html.find("<title>")
-            && let Some(title_end) = html[title_pos..].find("</title>")
-        {
-            debug!(
-                "Page title: {}",
-                &html[title_pos + 7..title_pos + title_end]
-            );
-        }
-
-        // Check for common indicators
-        let indicators = [
-            ("pagedata", html.contains("pagedata")),
-            ("data-blob", html.contains("data-blob")),
-            ("digital_items", html.contains("digital_items")),
-            ("download_items", html.contains("download_items")),
-            ("downloads", html.contains("\"downloads\"")),
-            ("TralbumData", html.contains("TralbumData")),
-        ];
-
-        for (name, found) in indicators {
-            if found {
-                debug!("Page contains: {name}");
-            }
-        }
-
-        // Check for error messages
-        if (html.contains("error") || html.contains("Error"))
-            && let Some(pos) = html.to_lowercase().find("error")
-        {
-            let snippet = &html[pos.saturating_sub(50)..html.len().min(pos + 200)];
-            debug!("Possible error in page: {}", snippet);
-        }
-
-        // List available formats if downloads section found
-        for fmt in [
-            "flac",
-            "mp3-320",
-            "mp3-v0",
-            "aac-hi",
-            "vorbis",
-            "alac",
-            "wav",
-            "aiff-lossless",
-        ] {
-            if html.contains(&format!("\"{}\"", fmt)) {
-                debug!("Format '{}' found in page", fmt);
-            }
-        }
     }
 }
 

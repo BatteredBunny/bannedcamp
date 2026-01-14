@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
@@ -18,8 +17,6 @@ pub struct LibraryItem {
 
     /// Full item URL (e.g., "https://badmathhk.bandcamp.com/album/missing-narrative")
     pub item_url: Option<String>,
-    pub purchase_date: DateTime<Utc>,
-    pub artwork_url: Option<String>,
     pub download_url: String,
     pub available_formats: Vec<AudioFormat>,
     pub is_preorder: bool,

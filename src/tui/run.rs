@@ -17,14 +17,15 @@ use crate::tui::event::{AppEvent, EventHandler};
 use crate::tui::ui;
 
 pub fn run(output_dir: PathBuf) -> Result<()> {
-    let (request_tx, request_rx) = mpsc::channel::<AsyncRequest>(32);
-    let (response_tx, response_rx) = mpsc::channel::<AsyncResponse>(32);
-
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
+
+    let (request_tx, request_rx) = mpsc::channel::<AsyncRequest>(32);
+    let (response_tx, response_rx) = mpsc::channel::<AsyncResponse>(32);
 
     let mut app = App::new(request_tx.clone());
     app.output_dir = output_dir;
@@ -42,13 +43,15 @@ pub fn run(output_dir: PathBuf) -> Result<()> {
 
     let result = run_loop(&mut terminal, &mut app, &event_handler, &mut response_rx);
 
-    disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableMouseCapture
     )?;
+
+    disable_raw_mode()?;
     terminal.show_cursor()?;
+    terminal.clear()?;
 
     result
 }

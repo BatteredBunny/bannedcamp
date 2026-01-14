@@ -1,6 +1,6 @@
 # bannedcamp
 
-Bandcamp library downloader
+CLI & TUI Bandcamp library downloader
 
 ## TUI
 
