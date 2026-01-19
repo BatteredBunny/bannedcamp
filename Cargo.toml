@@ -21,7 +21,7 @@ reqwest = { version = "0.13.1", features = ["cookies", "stream", "json", "form"]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 chrono = { version = "0.4.43", features = ["serde"] }
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 anyhow = "1.0.100"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
