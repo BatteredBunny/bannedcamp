@@ -108,13 +108,11 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LibraryState) {
         state.scroll_offset
     };
 
-    let visible_items = state.visible_items();
-    let items: Vec<ListItem> = visible_items
+    let visible_count = state.visible_count();
+    let visible_range = state.visible_items_range(scroll_offset, visible_height);
+    let items: Vec<ListItem> = visible_range
         .iter()
-        .enumerate()
-        .skip(scroll_offset)
-        .take(visible_height)
-        .map(|(display_idx, (_, item))| {
+        .map(|&(display_idx, _, item)| {
             let is_highlighted = display_idx == state.selected;
             let is_selected = state.selected_items.contains(&item.id);
 
@@ -149,14 +147,14 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LibraryState) {
         })
         .collect();
 
-    let list_title = if visible_items.is_empty() {
+    let list_title = if visible_count == 0 {
         if state.search_query.is_empty() {
             " 0/0 ".to_string()
         } else {
             " No matches ".to_string()
         }
     } else {
-        format!(" {}/{} ", state.selected + 1, visible_items.len())
+        format!(" {}/{} ", state.selected + 1, visible_count)
     };
 
     let list_focused = state.focus == LibraryFocus::List;
@@ -196,7 +194,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LibraryState) {
             Span::raw(" Search  "),
             Span::styled("d", Style::default().fg(Color::Yellow)),
             Span::raw(" Download  "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
             Span::raw(" Quit"),
         ]))
     }

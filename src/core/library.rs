@@ -18,7 +18,6 @@ pub struct LibraryItem {
     /// Full item URL (e.g., "https://badmathhk.bandcamp.com/album/missing-narrative")
     pub item_url: Option<String>,
     pub download_url: String,
-    pub available_formats: Vec<AudioFormat>,
     pub is_preorder: bool,
     pub is_hidden: bool,
 }
@@ -76,6 +75,30 @@ pub enum AudioFormat {
 }
 
 impl AudioFormat {
+    pub const ALL: [AudioFormat; 8] = [
+        AudioFormat::Flac,
+        AudioFormat::Mp3320,
+        AudioFormat::Mp3V0,
+        AudioFormat::Aac,
+        AudioFormat::OggVorbis,
+        AudioFormat::Alac,
+        AudioFormat::Wav,
+        AudioFormat::Aiff,
+    ];
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AudioFormat::Flac => "FLAC (lossless)",
+            AudioFormat::Mp3320 => "MP3 320kbps",
+            AudioFormat::Mp3V0 => "MP3 V0 (variable bitrate)",
+            AudioFormat::Aac => "AAC (high quality)",
+            AudioFormat::OggVorbis => "Ogg Vorbis",
+            AudioFormat::Alac => "ALAC (Apple lossless)",
+            AudioFormat::Wav => "WAV (uncompressed)",
+            AudioFormat::Aiff => "AIFF (uncompressed)",
+        }
+    }
+
     pub fn extension(&self) -> &'static str {
         match self {
             AudioFormat::Flac => "flac",

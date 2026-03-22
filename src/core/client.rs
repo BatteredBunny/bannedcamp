@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::core::auth::Credentials;
 use crate::core::library::{AudioFormat, ItemType, LibraryItem};
@@ -69,7 +69,7 @@ pub struct CollectionSummaryInternal {
     pub username: String,
     pub url: String,
 
-    pub tralbum_lookup: std::collections::HashMap<String, CollectionSummaryItem>,
+    pub tralbum_lookup: HashMap<String, CollectionSummaryItem>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -220,6 +220,11 @@ impl BandcampClient {
             );
 
             for item in collection.items {
+                if item.is_preorder {
+                    debug!("Skipping preorder item: {}", item.item_title);
+                    continue;
+                }
+
                 items.insert(
                     item.sale_item_id,
                     self.convert_collection_item(item, &collection.redownload_urls),
@@ -263,16 +268,16 @@ impl BandcampClient {
         // Get redownload URL from the response map
         // Key format is "{sale_item_type}{sale_item_id}" e.g. "a12345" for album 12345
         let redownload_key = format!("{}{}", item.sale_item_type, item.sale_item_id);
-        let download_url = redownload_urls
-            .get(&redownload_key)
-            .cloned()
-            .unwrap_or_else(|| {
-                // Fallback: construct URL if not in map
-                format!(
-                    "{BANDCAMP_BASE}/download?from=collection&payment_id={}&sitem_id={}",
-                    item.sale_item_id, item.sale_item_id
-                )
-            });
+        let download_url = match redownload_urls.get(&redownload_key).cloned() {
+            Some(url) => url,
+            None => {
+                warn!(
+                    "No redownload URL found for {} (key: {redownload_key}), item may not be downloadable",
+                    item.item_title,
+                );
+                String::new()
+            }
+        };
 
         debug!(
             "Item {} ({redownload_key}) redownload URL: {download_url}",
@@ -289,16 +294,6 @@ impl BandcampClient {
             slug,
             item_url: item.item_url,
             download_url,
-            available_formats: vec![
-                AudioFormat::Flac,
-                AudioFormat::Mp3320,
-                AudioFormat::Mp3V0,
-                AudioFormat::Aac,
-                AudioFormat::OggVorbis,
-                AudioFormat::Alac,
-                AudioFormat::Wav,
-                AudioFormat::Aiff,
-            ],
             is_preorder: item.is_preorder,
             is_hidden: item.hidden.unwrap_or(false),
         }
@@ -728,8 +723,9 @@ impl BandcampClient {
 
     /// Unescape HTML entities in a string
     fn unescape_html(&self, s: &str) -> String {
+        // &amp; must be replaced last to avoid double-unescaping
+        // (e.g. &amp;lt; -> &lt; -> < if &amp; is replaced first)
         s.replace("&quot;", "\"")
-            .replace("&amp;", "&")
             .replace("&lt;", "<")
             .replace("&gt;", ">")
             .replace("&#39;", "'")
@@ -738,6 +734,7 @@ impl BandcampClient {
             .replace("&#x2F;", "/")
             .replace("\\u0026", "&")
             .replace("\\/", "/")
+            .replace("&amp;", "&")
     }
 }
 

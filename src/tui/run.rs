@@ -110,10 +110,10 @@ fn handle_login_keys(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 
     match key.code {
-        Char('q') => app.quit(),
         Char(c) => app.login_input_char(c),
         Backspace => app.login_delete_char(),
         Enter => app.login_submit(),
+        Esc => app.quit(),
         _ => {}
     }
 }
@@ -148,7 +148,6 @@ fn handle_library_keys(app: &mut App, key: crossterm::event::KeyEvent) {
                     _ => {}
                 },
                 LibraryFocus::List => match key.code {
-                    Char('q') => app.quit(),
                     Down | Char('j') => app.library_move_down(),
                     Up | Char('k') => app.library_move_up(),
                     Enter | Char(' ') => app.library_toggle_selection(),
@@ -159,6 +158,8 @@ fn handle_library_keys(app: &mut App, key: crossterm::event::KeyEvent) {
                     Esc => {
                         if !app.library_state.search_query.is_empty() {
                             app.library_search_clear();
+                        } else if app.library_state.selected_items.is_empty() {
+                            app.quit();
                         } else {
                             app.library_clear_selection();
                         }
@@ -168,7 +169,7 @@ fn handle_library_keys(app: &mut App, key: crossterm::event::KeyEvent) {
             }
         }
         LibraryMode::FormatSelection => match key.code {
-            Char('q') | Esc => app.library_cancel_format_selection(),
+            Esc => app.library_cancel_format_selection(),
             Char('j') | Down => app.format_move_down(),
             Char('k') | Up => app.format_move_up(),
             Enter => app.format_confirm(),
@@ -181,7 +182,7 @@ fn handle_download_keys(app: &mut App, key: crossterm::event::KeyEvent) {
     use crossterm::event::KeyCode::*;
 
     match key.code {
-        Char('q') => {
+        Esc => {
             if !app.download_state.is_active {
                 app.quit();
             }

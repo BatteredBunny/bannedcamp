@@ -10,13 +10,9 @@ use crate::core::client::BandcampClient;
 use crate::core::library::LibraryItem;
 
 pub async fn run_download(args: DownloadArgs) -> Result<()> {
-    // Fallback to looking for BANDCAMP_COOKIE env variable
-    let cookie = args
-        .cookie
-        .or_else(|| std::env::var("BANDCAMP_COOKIE").ok())
-        .ok_or_else(|| {
-            anyhow::anyhow!("No cookie provided. Set --cookie flag, BANDCAMP_COOKIE env var")
-        })?;
+    let cookie = args.cookie.ok_or_else(|| {
+        anyhow::anyhow!("No cookie provided. Set --cookie flag or BANDCAMP_COOKIE env var")
+    })?;
 
     let mut client = BandcampClient::new();
 

@@ -85,7 +85,7 @@ fn create_progress_item(
     let progress_bar = format!("[{}{}]", "=".repeat(filled), " ".repeat(empty));
 
     let speed_str = if slot.speed_bytes_per_sec > 0.0 {
-        format!("{:>10}/s", format_bytes(slot.speed_bytes_per_sec as u64))
+        format!("{:>10}/s", format_bytes(slot.speed_bytes_per_sec))
     } else {
         " ".repeat(13)
     };
@@ -122,7 +122,7 @@ fn draw_help_bar(frame: &mut Frame, area: Rect, state: &DownloadState) {
         Line::from(vec![
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
             Span::raw(" Back to library "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::styled("Esc", Style::default().fg(Color::Yellow)),
             Span::raw(" Quit"),
         ])
     };

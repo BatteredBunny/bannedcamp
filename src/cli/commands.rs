@@ -46,8 +46,8 @@ pub enum Commands {
 
 #[derive(Debug, Args)]
 pub struct DownloadArgs {
-    /// Bandcamp identity cookie (can also be set via BANDCAMP_COOKIE env vars)
-    #[arg(long, global = true)]
+    /// Bandcamp identity cookie
+    #[arg(long, global = true, env = "BANDCAMP_COOKIE")]
     pub cookie: Option<String>,
 
     /// Audio format

@@ -106,7 +106,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LoginState) {
         vec![
             Line::from(""),
             Line::from(Span::styled(
-                "Enter Submit  q Quit",
+                "Enter Submit  Esc Quit",
                 Style::default().fg(Color::DarkGray),
             )),
         ]

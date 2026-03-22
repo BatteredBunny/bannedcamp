@@ -4,7 +4,7 @@ CLI & TUI Bandcamp library downloader
 
 ## TUI
 
-Browsing and downloading music from your library in TUI
+Browsing and downloading music from your library in TUI. If the `BANDCAMP_COOKIE` environment variable is set, it will be auto filled in the login screen.
 
 ```bash
 bannedcamp library
@@ -38,7 +38,9 @@ Commands:
 
 Options:
       --cookie <COOKIE>
-          Bandcamp identity cookie (can also be set via BANDCAMP_COOKIE env vars)
+          Bandcamp identity cookie
+
+          [env: BANDCAMP_COOKIE]
 
   -f, --format <FORMAT>
           Audio format

@@ -58,6 +58,7 @@ pub enum LibraryFocus {
 /// Library browser state
 pub struct LibraryState {
     pub items: Vec<LibraryItem>,
+    search_index: Vec<(String, String)>,
     /// Indices of items matching current search (empty = show all)
     pub filtered_indices: Vec<usize>,
     /// Current position in filtered list
@@ -82,6 +83,7 @@ impl Default for LibraryState {
     fn default() -> Self {
         Self {
             items: Vec::new(),
+            search_index: Vec::new(),
             filtered_indices: Vec::new(),
             selected: 0,
             scroll_offset: 0,
@@ -98,14 +100,46 @@ impl Default for LibraryState {
 }
 
 impl LibraryState {
-    /// Get the currently visible items (filtered or all)
-    pub fn visible_items(&self) -> Vec<(usize, &LibraryItem)> {
+    pub fn set_items(&mut self, items: Vec<LibraryItem>) {
+        self.search_index = items
+            .iter()
+            .map(|item| (item.artist.to_lowercase(), item.title.to_lowercase()))
+            .collect();
+        self.items = items;
+    }
+
+    pub fn visible_item_at(&self, index: usize) -> Option<(usize, &LibraryItem)> {
         if self.search_query.is_empty() {
-            self.items.iter().enumerate().collect()
+            self.items.get(index).map(|item| (index, item))
+        } else {
+            self.filtered_indices
+                .get(index)
+                .and_then(|&i| self.items.get(i).map(|item| (i, item)))
+        }
+    }
+
+    pub fn visible_items_range(
+        &self,
+        skip: usize,
+        take: usize,
+    ) -> Vec<(usize, usize, &LibraryItem)> {
+        if self.search_query.is_empty() {
+            self.items
+                .iter()
+                .enumerate()
+                .skip(skip)
+                .take(take)
+                .map(|(i, item)| (i, i, item))
+                .collect()
         } else {
             self.filtered_indices
                 .iter()
-                .filter_map(|&i| self.items.get(i).map(|item| (i, item)))
+                .enumerate()
+                .skip(skip)
+                .take(take)
+                .filter_map(|(display_idx, &i)| {
+                    self.items.get(i).map(|item| (display_idx, i, item))
+                })
                 .collect()
         }
     }
@@ -121,8 +155,7 @@ impl LibraryState {
 
     /// Get the item at the current selection
     pub fn selected_item(&self) -> Option<&LibraryItem> {
-        let visible = self.visible_items();
-        visible.get(self.selected).map(|(_, item)| *item)
+        self.visible_item_at(self.selected).map(|(_, item)| item)
     }
 
     /// Update filtered indices based on search query
@@ -132,12 +165,11 @@ impl LibraryState {
         } else {
             let query = self.search_query.to_lowercase();
             self.filtered_indices = self
-                .items
+                .search_index
                 .iter()
                 .enumerate()
-                .filter(|(_, item)| {
-                    item.artist.to_lowercase().contains(&query)
-                        || item.title.to_lowercase().contains(&query)
+                .filter(|(_, (artist, title))| {
+                    artist.contains(&query) || title.contains(&query)
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -150,32 +182,6 @@ impl LibraryState {
         } else if self.selected >= count {
             self.selected = count.saturating_sub(1);
             self.scroll_offset = self.scroll_offset.min(self.selected);
-        }
-    }
-}
-
-impl AudioFormat {
-    pub const ALL: [AudioFormat; 8] = [
-        AudioFormat::Flac,
-        AudioFormat::Mp3320,
-        AudioFormat::Mp3V0,
-        AudioFormat::Aac,
-        AudioFormat::OggVorbis,
-        AudioFormat::Alac,
-        AudioFormat::Wav,
-        AudioFormat::Aiff,
-    ];
-
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            AudioFormat::Flac => "FLAC (lossless)",
-            AudioFormat::Mp3320 => "MP3 320kbps",
-            AudioFormat::Mp3V0 => "MP3 V0 (variable bitrate)",
-            AudioFormat::Aac => "AAC (high quality)",
-            AudioFormat::OggVorbis => "Ogg Vorbis",
-            AudioFormat::Alac => "ALAC (Apple lossless)",
-            AudioFormat::Wav => "WAV (uncompressed)",
-            AudioFormat::Aiff => "AIFF (uncompressed)",
         }
     }
 }
@@ -366,7 +372,7 @@ impl App {
                 self.library_state.loading = false;
                 match result {
                     Ok(items) => {
-                        self.library_state.items = items;
+                        self.library_state.set_items(items);
                         self.library_state.selected = 0;
                         self.library_state.scroll_offset = 0;
                         self.library_state.error = None;
@@ -444,18 +450,30 @@ impl App {
 
     // Login screen actions
     pub fn login_input_char(&mut self, c: char) {
-        self.login_state
+        let byte_pos = self
+            .login_state
             .cookie_input
-            .insert(self.login_state.cursor_position, c);
+            .char_indices()
+            .nth(self.login_state.cursor_position)
+            .map(|(i, _)| i)
+            .unwrap_or(self.login_state.cookie_input.len());
+        self.login_state.cookie_input.insert(byte_pos, c);
         self.login_state.cursor_position += 1;
     }
 
     pub fn login_delete_char(&mut self) {
         if self.login_state.cursor_position > 0 {
             self.login_state.cursor_position -= 1;
-            self.login_state
+            let byte_pos = self
+                .login_state
                 .cookie_input
-                .remove(self.login_state.cursor_position);
+                .char_indices()
+                .nth(self.login_state.cursor_position)
+                .map(|(i, _)| i)
+                .unwrap_or(self.login_state.cookie_input.len());
+            if byte_pos < self.login_state.cookie_input.len() {
+                self.login_state.cookie_input.remove(byte_pos);
+            }
         }
     }
 
@@ -501,13 +519,20 @@ impl App {
 
     /// Select all visible items (respects current filter)
     pub fn library_select_all(&mut self) {
-        let ids: Vec<String> = self
-            .library_state
-            .visible_items()
-            .iter()
-            .map(|(_, item)| item.id.clone())
-            .collect();
-        self.library_state.selected_items.extend(ids);
+        if self.library_state.search_query.is_empty() {
+            self.library_state.selected_items.extend(
+                self.library_state.items.iter().map(|item| item.id.clone()),
+            );
+        } else {
+            let ids: Vec<String> = self
+                .library_state
+                .filtered_indices
+                .iter()
+                .filter_map(|&i| self.library_state.items.get(i))
+                .map(|item| item.id.clone())
+                .collect();
+            self.library_state.selected_items.extend(ids);
+        }
     }
 
     // Focus actions
@@ -591,22 +616,23 @@ impl App {
             return;
         }
 
-        // Setup download state
-        self.download_state = DownloadState {
+        let total_items = items.len();
+
+        // Start the download
+        let _ = self.async_tx.try_send(AsyncRequest::StartBatchDownload {
             items: items.clone(),
-            total_items: items.len(),
+            format,
+            output_dir: self.output_dir.clone(),
+        });
+
+        self.download_state = DownloadState {
+            items,
+            total_items,
             ..Default::default()
         };
 
         self.screen = Screen::Download;
         self.library_state.mode = LibraryMode::Browse;
-
-        // Start the download
-        let _ = self.async_tx.try_send(AsyncRequest::StartBatchDownload {
-            items,
-            format,
-            output_dir: self.output_dir.clone(),
-        });
     }
 
     // Download screen actions

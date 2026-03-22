@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use futures::StreamExt;
 use std::future::Future;
@@ -60,7 +60,7 @@ pub trait DownloadProgressReporter: Send + Sync {
 pub async fn download_item<P: DownloadProgressReporter>(
     client: &BandcampClient,
     item: &LibraryItem,
-    output_dir: &PathBuf,
+    output_dir: &Path,
     format: AudioFormat,
     name_format: Option<&str>,
     reporter: P,
@@ -107,27 +107,41 @@ pub async fn download_item<P: DownloadProgressReporter>(
     file.flush()?;
     drop(file);
 
-    let filename = &item.construct_filename(format, name_format);
+    let filename = item.construct_filename(format, name_format);
 
     let output_path = if item.item_type == ItemType::Track {
         // For tracks, rename the temp file
-        let final_path = output_dir.join(filename);
+        let final_path = output_dir.join(&filename);
+        let tp = temp_path.clone();
+        let fp = final_path.clone();
 
-        // Create parent directory for formats with folder paths in them
-        if let Some(parent) = final_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            if let Some(parent) = fp.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::rename(&tp, &fp)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| BandcampError::DownloadError(format!("Task join error: {e}")))??;
 
-        std::fs::rename(&temp_path, &final_path)?;
         final_path
     } else {
         // For albums and packages, extract the zip archive
         reporter.on_extracting().await;
-        let extract_path = output_dir.join(filename);
-        std::fs::create_dir_all(&extract_path)?;
+        let extract_path = output_dir.join(&filename);
+        let tp = temp_path.clone();
+        let ep = extract_path.clone();
 
-        extract_zip(&temp_path, &extract_path)?;
-        std::fs::remove_file(&temp_path)?;
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            std::fs::create_dir_all(&ep)?;
+            extract_zip(&tp, &ep)?;
+            std::fs::remove_file(&tp)?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| BandcampError::DownloadError(format!("Task join error: {e}")))??;
+
         extract_path
     };
 
@@ -140,7 +154,7 @@ pub async fn download_item<P: DownloadProgressReporter>(
 /// Extracts a ZIP archive to the specified directory.
 ///
 /// Returns the `output_dir` path on success.
-pub fn extract_zip(zip_path: &PathBuf, output_dir: &PathBuf) -> Result<()> {
+pub fn extract_zip(zip_path: &Path, output_dir: &Path) -> Result<()> {
     debug!("Extracting {zip_path:?} to {output_dir:?}");
 
     let file = std::fs::File::open(zip_path)?;
