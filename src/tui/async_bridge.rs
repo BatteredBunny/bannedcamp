@@ -38,6 +38,11 @@ pub enum AsyncResponse {
         item_id: String,
         item_index: usize,
     },
+    /// Download phase changed (fetching URL, downloading, extracting)
+    DownloadStatusUpdate {
+        item_id: String,
+        status: crate::tui::app::SlotStatus,
+    },
     /// Progress for current item
     DownloadProgress {
         item_id: String,
@@ -203,11 +208,27 @@ impl TuiProgressReporter {
 
 impl DownloadProgressReporter for TuiProgressReporter {
     fn on_start(&self, _total_size: Option<u64>) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async move {})
+        Box::pin(async move {
+            let _ = self
+                .response_tx
+                .send(AsyncResponse::DownloadStatusUpdate {
+                    item_id: self.item_id.clone(),
+                    status: crate::tui::app::SlotStatus::Downloading,
+                })
+                .await;
+        })
     }
 
     fn on_fetching_url(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async move {})
+        Box::pin(async move {
+            let _ = self
+                .response_tx
+                .send(AsyncResponse::DownloadStatusUpdate {
+                    item_id: self.item_id.clone(),
+                    status: crate::tui::app::SlotStatus::FetchingUrl,
+                })
+                .await;
+        })
     }
 
     fn on_progress(
@@ -241,7 +262,15 @@ impl DownloadProgressReporter for TuiProgressReporter {
     }
 
     fn on_extracting(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async move {})
+        Box::pin(async move {
+            let _ = self
+                .response_tx
+                .send(AsyncResponse::DownloadStatusUpdate {
+                    item_id: self.item_id.clone(),
+                    status: crate::tui::app::SlotStatus::Extracting,
+                })
+                .await;
+        })
     }
 
     fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {

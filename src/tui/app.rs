@@ -191,6 +191,14 @@ pub struct ItemDownloadResult {
     pub result: Result<PathBuf, String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SlotStatus {
+    #[default]
+    FetchingUrl,
+    Downloading,
+    Extracting,
+}
+
 /// Progress state for a single concurrent download slot
 #[derive(Debug, Clone, Default)]
 pub struct DownloadSlot {
@@ -198,6 +206,8 @@ pub struct DownloadSlot {
     pub item: Option<LibraryItem>,
     /// Item ID (for matching progress updates)
     pub item_id: Option<String>,
+    /// Current phase of the download
+    pub status: SlotStatus,
     /// Bytes downloaded
     pub downloaded: u64,
     /// Total bytes (if known)
@@ -257,6 +267,8 @@ pub struct DownloadState {
     pub start_time: Option<Instant>,
     /// Concurrent download slots
     pub slots: [DownloadSlot; MAX_CONCURRENT_DOWNLOADS],
+    /// Spinner for loading states
+    pub spinner: Spinner,
 }
 
 impl DownloadState {
@@ -355,6 +367,9 @@ impl App {
         if self.library_state.loading {
             self.library_state.spinner.tick();
         }
+        if self.download_state.is_active {
+            self.download_state.spinner.tick();
+        }
     }
 
     /// Handle async response from the bridge
@@ -412,6 +427,11 @@ impl App {
                     slot.speed_bytes_per_sec = 0.0;
                     slot.last_update = None;
                     slot.last_bytes = 0;
+                }
+            }
+            AsyncResponse::DownloadStatusUpdate { item_id, status } => {
+                if let Some(slot) = self.download_state.find_slot_mut(&item_id) {
+                    slot.status = status;
                 }
             }
             AsyncResponse::DownloadProgress {

@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     core::utils::{format_bytes, truncate_str},
-    tui::app::DownloadState,
+    tui::app::{DownloadState, SlotStatus},
 };
 
 pub fn draw(frame: &mut Frame, area: Rect, state: &DownloadState) {
@@ -28,8 +28,15 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &DownloadState) {
     draw_help_bar(frame, chunks[1], state);
 }
 
+fn name_width(area_width: u16) -> usize {
+    let bar_width = 20usize;
+    let right_width = 1 + (bar_width + 2) + 5 + 13;
+    (area_width as usize).saturating_sub(right_width)
+}
+
 fn draw_download_list(frame: &mut Frame, area: Rect, state: &DownloadState) {
     let mut items: Vec<ListItem> = Vec::new();
+    let name_width = name_width(area.width);
 
     for id in &state.item_order {
         let Some(item) = state.items.get(id) else {
@@ -42,7 +49,13 @@ fn draw_download_list(frame: &mut Frame, area: Rect, state: &DownloadState) {
             .iter()
             .find(|s| s.item_id.as_deref() == Some(id.as_str()))
         {
-            items.push(create_progress_item(&display_name, slot, area.width));
+            let spinner = state.spinner.current();
+            items.push(create_progress_item(
+                &display_name,
+                slot,
+                spinner,
+                area.width,
+            ));
             continue;
         }
 
@@ -63,11 +76,14 @@ fn draw_download_list(frame: &mut Frame, area: Rect, state: &DownloadState) {
             continue;
         }
 
-        let max_len = area.width.saturating_sub(4) as usize;
-        let truncated = truncate_str(&display_name, max_len);
+        let name_display = if display_name.chars().count() > name_width {
+            truncate_str(&display_name, name_width)
+        } else {
+            format!("{display_name:<name_width$}")
+        };
         items.push(ListItem::new(Line::from(vec![
-            Span::styled("○ ", Style::default().fg(Color::DarkGray)),
-            Span::styled(truncated, Style::default().fg(Color::DarkGray)),
+            Span::styled(name_display, Style::default().fg(Color::DarkGray)),
+            Span::styled(" in queue", Style::default().fg(Color::DarkGray)),
         ])));
     }
 
@@ -78,25 +94,11 @@ fn draw_download_list(frame: &mut Frame, area: Rect, state: &DownloadState) {
 fn create_progress_item(
     name: &str,
     slot: &crate::tui::app::DownloadSlot,
+    spinner: &str,
     width: u16,
 ) -> ListItem<'static> {
-    let progress = slot.progress_percent() as u16;
     let bar_width = 20usize;
-    let filled = (progress as usize * bar_width / 100).min(bar_width);
-    let empty = bar_width.saturating_sub(filled);
-
-    let progress_bar = format!("[{}{}]", "=".repeat(filled), " ".repeat(empty));
-
-    let speed_str = if slot.speed_bytes_per_sec > 0.0 {
-        format!("{:>10}/s", format_bytes(slot.speed_bytes_per_sec))
-    } else {
-        " ".repeat(13)
-    };
-
-    let percent_str = format!("{progress:>4}%");
-
-    let right_width = 1 + (bar_width + 2) + 5 + 13;
-    let name_width = (width as usize).saturating_sub(right_width);
+    let name_width = name_width(width);
 
     let name_display = if name.chars().count() > name_width {
         truncate_str(name, name_width)
@@ -104,23 +106,80 @@ fn create_progress_item(
         format!("{name:<name_width$}")
     };
 
-    let line = Line::from(vec![
-        Span::styled(name_display, Style::default().fg(Color::Cyan)),
-        Span::raw(" "),
-        Span::styled(progress_bar, Style::default().fg(Color::Blue)),
-        Span::styled(percent_str, Style::default().fg(Color::DarkGray)),
-        Span::styled(speed_str, Style::default().fg(Color::DarkGray)),
-    ]);
+    match slot.status {
+        SlotStatus::FetchingUrl | SlotStatus::Extracting => {
+            let status_text = match slot.status {
+                SlotStatus::FetchingUrl => "fetching URL...",
+                SlotStatus::Extracting => "extracting...",
+                _ => unreachable!(),
+            };
 
-    ListItem::new(line)
+            let line = Line::from(vec![
+                Span::styled(name_display, Style::default().fg(Color::Cyan)),
+                Span::styled(
+                    format!(" {spinner} {status_text}"),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]);
+            ListItem::new(line)
+        }
+        SlotStatus::Downloading => {
+            let progress = slot.progress_percent() as u16;
+            let filled = (progress as usize * bar_width / 100).min(bar_width);
+            let empty = bar_width.saturating_sub(filled);
+
+            let progress_bar = format!("[{}{}]", "=".repeat(filled), " ".repeat(empty));
+
+            let speed_str = if slot.speed_bytes_per_sec > 0.0 {
+                format!("{:>10}/s", format_bytes(slot.speed_bytes_per_sec))
+            } else {
+                " ".repeat(13)
+            };
+
+            let percent_str = format!("{progress:>4}%");
+
+            let line = Line::from(vec![
+                Span::styled(name_display, Style::default().fg(Color::Cyan)),
+                Span::raw(" "),
+                Span::styled(progress_bar, Style::default().fg(Color::Blue)),
+                Span::styled(percent_str, Style::default().fg(Color::DarkGray)),
+                Span::styled(speed_str, Style::default().fg(Color::DarkGray)),
+            ]);
+            ListItem::new(line)
+        }
+    }
 }
 
 fn draw_help_bar(frame: &mut Frame, area: Rect, state: &DownloadState) {
     let help_text = if state.is_active {
-        Line::from(vec![Span::styled(
-            "Downloading...",
+        let done = state.results.len();
+        let total = state.total_items;
+        let ok = state.success_count();
+        let fail = state.failure_count();
+        let mut parts = vec![Span::styled(
+            format!("{done}/{total} complete"),
             Style::default().fg(Color::DarkGray),
-        )])
+        )];
+        if ok > 0 || fail > 0 {
+            parts.push(Span::styled(" (", Style::default().fg(Color::DarkGray)));
+            if ok > 0 {
+                parts.push(Span::styled(
+                    format!("{ok} ok"),
+                    Style::default().fg(Color::Green),
+                ));
+                if fail > 0 {
+                    parts.push(Span::styled(", ", Style::default().fg(Color::DarkGray)));
+                }
+            }
+            if fail > 0 {
+                parts.push(Span::styled(
+                    format!("{fail} failed"),
+                    Style::default().fg(Color::Red),
+                ));
+            }
+            parts.push(Span::styled(")", Style::default().fg(Color::DarkGray)));
+        }
+        Line::from(parts)
     } else {
         Line::from(vec![
             Span::styled("Enter", Style::default().fg(Color::Yellow)),
