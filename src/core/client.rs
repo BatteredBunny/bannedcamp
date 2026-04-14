@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/201001
 
 /// Response from the collection_items API endpoint
 #[derive(Debug, Deserialize)]
-pub struct CollectionResponse {
+struct CollectionResponse {
     items: Vec<CollectionItem>,
     more_available: bool,
     last_token: Option<String>,
@@ -50,6 +50,13 @@ struct CollectionItem {
     band_name: String,
     #[serde(default)]
     is_preorder: bool,
+}
+
+/// A page of library items from the collection API
+pub struct CollectionPage {
+    pub items: Vec<LibraryItem>,
+    pub more_available: bool,
+    pub next_token: Option<String>,
 }
 
 pub struct BandcampClient {
@@ -141,7 +148,7 @@ impl BandcampClient {
         }
     }
 
-    pub async fn collection_items(
+    async fn collection_items(
         &self,
         fan_id: u64,
         older_than_token: &str,
@@ -177,7 +184,7 @@ impl BandcampClient {
         }
     }
 
-    /// Validate a session cookie by attempting to fetch the user's fan ID
+    /// Validate a session cookie by attempting to fetch the user's fan ID.
     pub async fn validate_cookie(&mut self, identity_cookie: &str) -> Result<Credentials> {
         info!("Validating session cookie...");
 
@@ -194,54 +201,69 @@ impl BandcampClient {
         Ok(credentials)
     }
 
-    /// Fetch the user's library collection
-    pub async fn get_collection(&self) -> Result<Vec<LibraryItem>> {
+    /// Generate the initial pagination token for collection fetching
+    pub fn initial_collection_token() -> String {
+        format!("{}::a::", chrono::Utc::now().timestamp() + 86400)
+    }
+
+    /// Fetch a single page of the user's library collection.
+    pub async fn get_collection_page(&self, token: &str) -> Result<CollectionPage> {
         let creds = self
             .credentials
             .as_ref()
             .ok_or(BandcampError::NotLoggedIn)?;
 
-        let fan_id = creds.fan_id;
+        let collection = self.collection_items(creds.fan_id, token).await?;
 
-        info!("Fetching collection for fan_id: {fan_id}");
+        debug!(
+            "Fetched {} items, more_available: {}",
+            collection.items.len(),
+            collection.more_available
+        );
 
-        let mut token: String = format!("{}::a::", chrono::Utc::now().timestamp() + 86400);
-        let mut items: HashMap<u64, LibraryItem> = HashMap::new();
+        let items: Vec<LibraryItem> = collection
+            .items
+            .into_iter()
+            .filter(|item| !item.is_preorder)
+            .map(|item| self.convert_collection_item(item, &collection.redownload_urls))
+            .collect();
+
+        Ok(CollectionPage {
+            items,
+            more_available: collection.more_available,
+            next_token: collection.last_token,
+        })
+    }
+
+    /// Fetch the user's entire library collection
+    pub async fn get_collection(&self) -> Result<Vec<LibraryItem>> {
+        info!("Fetching collection...");
+
+        let mut token = Self::initial_collection_token();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut items = Vec::new();
 
         loop {
-            let collection = self.collection_items(fan_id, &token).await?;
+            let page = self.get_collection_page(&token).await?;
 
-            debug!(
-                "Fetched {} items, more_available: {}",
-                collection.items.len(),
-                collection.more_available
-            );
-
-            for item in collection.items {
-                if item.is_preorder {
-                    debug!("Skipping preorder item: {}", item.item_title);
-                    continue;
+            for item in page.items {
+                if seen.insert(item.id.clone()) {
+                    items.push(item);
                 }
-
-                items.insert(
-                    item.sale_item_id,
-                    self.convert_collection_item(item, &collection.redownload_urls),
-                );
             }
 
-            if !collection.more_available {
+            if !page.more_available {
                 break;
             }
 
-            if let Some(new_token) = collection.last_token {
-                token = new_token;
-            } else {
-                break;
+            match page.next_token {
+                Some(t) => token = t,
+                None => break,
             }
         }
 
         info!("Fetched {} total items from collection", items.len());
-        Ok(items.into_values().collect())
+        Ok(items)
     }
 
     /// Convert API collection item to our LibraryItem type
@@ -490,7 +512,8 @@ impl BandcampClient {
         for anchor in pagedata_anchors {
             if let Some(div_pos) = html.find(anchor) {
                 debug!("Found pagedata div at position {div_pos}");
-                let search_end = (html[div_pos..].find('>').unwrap_or(2000) + div_pos).min(html.len());
+                let search_end =
+                    (html[div_pos..].find('>').unwrap_or(2000) + div_pos).min(html.len());
                 let div_tag = &html[div_pos..search_end];
 
                 if let Some(url) = self.try_extract_blob(div_tag, format) {
@@ -511,7 +534,10 @@ impl BandcampClient {
 
                     if blob.contains("digital_items") || blob.contains("downloads") {
                         let unescaped = self.unescape_html(blob);
-                        debug!("Found data-blob with download info ({} chars)", unescaped.len());
+                        debug!(
+                            "Found data-blob with download info ({} chars)",
+                            unescaped.len()
+                        );
 
                         if let Some(url) = self.extract_url_from_json(&unescaped, format) {
                             return Ok(Some(url));

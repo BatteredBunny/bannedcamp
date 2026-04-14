@@ -30,7 +30,13 @@ pub enum AsyncRequest {
 #[derive(Debug)]
 pub enum AsyncResponse {
     CookieValidated(Result<Credentials, String>),
-    CollectionFetched(Result<Vec<LibraryItem>, String>),
+    /// A page of library items has been fetched
+    LibraryPageFetched {
+        items: Vec<LibraryItem>,
+        done: bool,
+    },
+    /// Collection fetch failed
+    CollectionFetchError(String),
     /// Batch download started with total item count
     BatchDownloadStarted {
         total_items: usize,
@@ -99,11 +105,7 @@ impl AsyncBridge {
                         .await;
                 }
                 AsyncRequest::FetchCollection => {
-                    let result = self.fetch_collection().await;
-                    let _ = self
-                        .response_tx
-                        .send(AsyncResponse::CollectionFetched(result))
-                        .await;
+                    self.fetch_collection_streaming().await;
                 }
                 AsyncRequest::StartBatchDownload {
                     items,
@@ -140,9 +142,63 @@ impl AsyncBridge {
         }
     }
 
-    async fn fetch_collection(&self) -> Result<Vec<LibraryItem>, String> {
-        let client = self.client.as_ref().ok_or("Not logged in")?;
-        client.get_collection().await.map_err(|e| e.to_string())
+    async fn fetch_collection_streaming(&self) {
+        let client = match self.client.as_ref() {
+            Some(c) => c,
+            None => {
+                let _ = self
+                    .response_tx
+                    .send(AsyncResponse::CollectionFetchError("Not logged in".into()))
+                    .await;
+                return;
+            }
+        };
+
+        let mut token = BandcampClient::initial_collection_token();
+        let mut seen_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        loop {
+            match client.get_collection_page(&token).await {
+                Ok(page) => {
+                    let items: Vec<LibraryItem> = page
+                        .items
+                        .into_iter()
+                        .filter(|item| seen_ids.insert(item.id.clone()))
+                        .collect();
+
+                    let done = !page.more_available;
+                    let _ = self
+                        .response_tx
+                        .send(AsyncResponse::LibraryPageFetched { items, done })
+                        .await;
+
+                    if done {
+                        break;
+                    }
+
+                    match page.next_token {
+                        Some(t) => token = t,
+                        None => {
+                            let _ = self
+                                .response_tx
+                                .send(AsyncResponse::LibraryPageFetched {
+                                    items: vec![],
+                                    done: true,
+                                })
+                                .await;
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    let _ = self
+                        .response_tx
+                        .send(AsyncResponse::CollectionFetchError(e.to_string()))
+                        .await;
+                    break;
+                }
+            }
+        }
     }
 
     async fn start_batch_download(
@@ -236,31 +292,30 @@ impl TuiProgressReporter {
             last_progress: std::sync::Mutex::new(Instant::now()),
         }
     }
-}
 
-impl DownloadProgressReporter for TuiProgressReporter {
-    fn on_start(&self, _total_size: Option<u64>) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+    fn send_status(
+        &self,
+        status: crate::tui::app::DownloadItemStatus,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
             let _ = self
                 .response_tx
                 .send(AsyncResponse::DownloadStatusUpdate {
                     item_id: self.item_id.clone(),
-                    status: crate::tui::app::DownloadItemStatus::Downloading,
+                    status,
                 })
                 .await;
         })
     }
+}
+
+impl DownloadProgressReporter for TuiProgressReporter {
+    fn on_start(&self, _total_size: Option<u64>) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        self.send_status(crate::tui::app::DownloadItemStatus::Downloading)
+    }
 
     fn on_fetching_url(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async move {
-            let _ = self
-                .response_tx
-                .send(AsyncResponse::DownloadStatusUpdate {
-                    item_id: self.item_id.clone(),
-                    status: crate::tui::app::DownloadItemStatus::FetchingUrl,
-                })
-                .await;
-        })
+        self.send_status(crate::tui::app::DownloadItemStatus::FetchingUrl)
     }
 
     fn on_progress(
@@ -269,7 +324,6 @@ impl DownloadProgressReporter for TuiProgressReporter {
         total: Option<u64>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async move {
-            // Throttle updates to every 100ms
             let should_send = {
                 let mut last = self.last_progress.lock().unwrap();
                 if last.elapsed().as_millis() >= 100 {
@@ -294,15 +348,7 @@ impl DownloadProgressReporter for TuiProgressReporter {
     }
 
     fn on_extracting(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(async move {
-            let _ = self
-                .response_tx
-                .send(AsyncResponse::DownloadStatusUpdate {
-                    item_id: self.item_id.clone(),
-                    status: crate::tui::app::DownloadItemStatus::Extracting,
-                })
-                .await;
-        })
+        self.send_status(crate::tui::app::DownloadItemStatus::Extracting)
     }
 
     fn on_complete(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {

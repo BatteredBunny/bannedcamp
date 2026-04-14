@@ -3,7 +3,7 @@ use std::pin::Pin;
 
 use bannedcamp::core::auth::Credentials;
 use bannedcamp::core::client::BandcampClient;
-use bannedcamp::core::download::{download_item, DownloadProgressReporter};
+use bannedcamp::core::download::{DownloadProgressReporter, download_item};
 use bannedcamp::core::library::AudioFormat;
 
 fn get_cookie() -> Option<String> {
@@ -97,7 +97,10 @@ async fn test_get_collection() {
         .await
         .expect("get_collection should succeed");
 
-    assert!(!items.is_empty(), "collection should have at least one item");
+    assert!(
+        !items.is_empty(),
+        "collection should have at least one item"
+    );
 
     for item in &items {
         assert!(!item.title.is_empty(), "item title should be non-empty");
@@ -127,11 +130,7 @@ async fn test_collection_pagination() {
 
     let mut seen_ids = std::collections::HashSet::new();
     for item in &items {
-        assert!(
-            seen_ids.insert(&item.id),
-            "duplicate item id: {}",
-            item.id
-        );
+        assert!(seen_ids.insert(&item.id), "duplicate item id: {}", item.id);
     }
 
     // get_collection filters preorders, so count may be lower than summary

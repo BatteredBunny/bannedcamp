@@ -105,6 +105,25 @@ impl LibraryState {
         self.update_filter();
     }
 
+    fn item_matches_query(item: &LibraryItem, query: &str) -> bool {
+        item.artist.to_lowercase().contains(query)
+            || item.title.to_lowercase().contains(query)
+    }
+
+    pub fn append_items(&mut self, new_items: Vec<LibraryItem>) {
+        let old_len = self.items.len();
+        self.items.extend(new_items);
+
+        if !self.search_query.is_empty() {
+            let query = self.search_query.to_lowercase();
+            for (i, item) in self.items[old_len..].iter().enumerate() {
+                if Self::item_matches_query(item, &query) {
+                    self.filtered_indices.push(old_len + i);
+                }
+            }
+        }
+    }
+
     pub fn visible_item_at(&self, index: usize) -> Option<(usize, &LibraryItem)> {
         if self.search_query.is_empty() {
             self.items.get(index).map(|item| (index, item))
@@ -167,10 +186,7 @@ impl LibraryState {
                 .items
                 .iter()
                 .enumerate()
-                .filter(|(_, item)| {
-                    item.artist.to_lowercase().contains(&query)
-                        || item.title.to_lowercase().contains(&query)
-                })
+                .filter(|(_, item)| Self::item_matches_query(item, &query))
                 .map(|(i, _)| i)
                 .collect();
         }
@@ -392,19 +408,16 @@ impl App {
                     }
                 }
             }
-            AsyncResponse::CollectionFetched(result) => {
-                self.library_state.loading = false;
-                match result {
-                    Ok(items) => {
-                        self.library_state.set_items(items);
-                        self.library_state.selected = 0;
-                        self.library_state.scroll_offset = 0;
-                        self.library_state.error = None;
-                    }
-                    Err(e) => {
-                        self.library_state.error = Some(e);
-                    }
+            AsyncResponse::LibraryPageFetched { items, done } => {
+                self.library_state.error = None;
+                self.library_state.append_items(items);
+                if done {
+                    self.library_state.loading = false;
                 }
+            }
+            AsyncResponse::CollectionFetchError(e) => {
+                self.library_state.loading = false;
+                self.library_state.error = Some(e);
             }
             AsyncResponse::BatchDownloadStarted { .. } => {
                 self.download_state.is_active = true;

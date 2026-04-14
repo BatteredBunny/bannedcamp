@@ -126,10 +126,6 @@ fn handle_login_keys(app: &mut App, key: crossterm::event::KeyEvent) {
 fn handle_library_keys(app: &mut App, key: crossterm::event::KeyEvent) {
     use crossterm::event::KeyCode::*;
 
-    if app.library_state.loading {
-        return; // Ignore input while loading
-    }
-
     match app.library_state.mode {
         LibraryMode::Browse => {
             // Tab toggles focus between search bar and list

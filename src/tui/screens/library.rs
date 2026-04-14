@@ -55,8 +55,16 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LibraryState) {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )
     } else if state.loading {
+        let text = if total_count == 0 {
+            format!("{} Loading library...", state.spinner.current())
+        } else {
+            format!(
+                "{} Loading library... ({total_count} items)",
+                state.spinner.current(),
+            )
+        };
         (
-            format!("{} Loading library...", state.spinner.current()),
+            text,
             Style::default()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
