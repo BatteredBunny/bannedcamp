@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     core::utils::{format_bytes, truncate_str},
-    tui::app::{DownloadState, SlotStatus},
+    tui::app::{DownloadItemStatus, DownloadState},
 };
 
 pub fn draw(frame: &mut Frame, area: Rect, state: &DownloadState) {
@@ -38,16 +38,14 @@ fn draw_download_list(frame: &mut Frame, area: Rect, state: &DownloadState) {
     let mut items: Vec<ListItem> = Vec::new();
     let name_width = name_width(area.width);
 
-    for id in &state.item_order {
-        let Some(item) = state.items.get(id) else {
-            continue;
-        };
-        let display_name = format!("{} - {}", item.artist, item.title);
+    for di in &state.queue {
+        let display_name = format!("{} - {}", di.item.artist, di.item.title);
 
+        // Check if this item has an active download slot (for progress display)
         if let Some(slot) = state
             .slots
             .iter()
-            .find(|s| s.item_id.as_deref() == Some(id.as_str()))
+            .find(|s| s.item_id.as_deref() == Some(di.item.id.as_str()))
         {
             let spinner = state.spinner.current();
             items.push(create_progress_item(
@@ -59,32 +57,45 @@ fn draw_download_list(frame: &mut Frame, area: Rect, state: &DownloadState) {
             continue;
         }
 
-        if let Some(result) = state.results.iter().find(|r| r.item_id == *id) {
-            let (icon, style, suffix) = match &result.result {
-                Ok(_) => ("✓", Style::default().fg(Color::Green), String::new()),
-                Err(e) => ("✗", Style::default().fg(Color::Red), format!(" - {}", e)),
-            };
-
-            let max_len = area.width.saturating_sub(4) as usize;
-            let full_text = format!("{display_name}{suffix}");
-            let truncated = truncate_str(&full_text, max_len);
-
-            items.push(ListItem::new(Line::from(vec![
-                Span::styled(format!("{icon} "), style),
-                Span::styled(truncated, style),
-            ])));
-            continue;
+        match &di.status {
+            DownloadItemStatus::Done(Ok(_)) => {
+                let max_len = area.width.saturating_sub(4) as usize;
+                let truncated = truncate_str(&display_name, max_len);
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled("✓ ", Style::default().fg(Color::Green)),
+                    Span::styled(truncated, Style::default().fg(Color::Green)),
+                ])));
+            }
+            DownloadItemStatus::Done(Err(e)) => {
+                let max_len = area.width.saturating_sub(4) as usize;
+                let full_text = format!("{display_name} - {e}");
+                let truncated = truncate_str(&full_text, max_len);
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled("✗ ", Style::default().fg(Color::Red)),
+                    Span::styled(truncated, Style::default().fg(Color::Red)),
+                ])));
+            }
+            DownloadItemStatus::Cancelled => {
+                let max_len = area.width.saturating_sub(4) as usize;
+                let truncated = truncate_str(&display_name, max_len);
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled("⊘ ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(truncated, Style::default().fg(Color::DarkGray)),
+                ])));
+            }
+            _ => {
+                // Pending or active without a slot yet
+                let name_display = if display_name.chars().count() > name_width {
+                    truncate_str(&display_name, name_width)
+                } else {
+                    format!("{display_name:<name_width$}")
+                };
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled(name_display, Style::default().fg(Color::DarkGray)),
+                    Span::styled(" in queue", Style::default().fg(Color::DarkGray)),
+                ])));
+            }
         }
-
-        let name_display = if display_name.chars().count() > name_width {
-            truncate_str(&display_name, name_width)
-        } else {
-            format!("{display_name:<name_width$}")
-        };
-        items.push(ListItem::new(Line::from(vec![
-            Span::styled(name_display, Style::default().fg(Color::DarkGray)),
-            Span::styled(" in queue", Style::default().fg(Color::DarkGray)),
-        ])));
     }
 
     let list = List::new(items);
@@ -107,10 +118,10 @@ fn create_progress_item(
     };
 
     match slot.status {
-        SlotStatus::FetchingUrl | SlotStatus::Extracting => {
+        DownloadItemStatus::FetchingUrl | DownloadItemStatus::Extracting => {
             let status_text = match slot.status {
-                SlotStatus::FetchingUrl => "fetching URL...",
-                SlotStatus::Extracting => "extracting...",
+                DownloadItemStatus::FetchingUrl => "fetching URL...",
+                DownloadItemStatus::Extracting => "extracting...",
                 _ => unreachable!(),
             };
 
@@ -123,7 +134,7 @@ fn create_progress_item(
             ]);
             ListItem::new(line)
         }
-        SlotStatus::Downloading => {
+        DownloadItemStatus::Downloading => {
             let progress = slot.progress_percent() as u16;
             let filled = (progress as usize * bar_width / 100).min(bar_width);
             let empty = bar_width.saturating_sub(filled);
@@ -147,13 +158,14 @@ fn create_progress_item(
             ]);
             ListItem::new(line)
         }
+        _ => ListItem::new(Line::from(name_display)),
     }
 }
 
 fn draw_help_bar(frame: &mut Frame, area: Rect, state: &DownloadState) {
     let help_text = if state.is_active {
-        let done = state.results.len();
-        let total = state.total_items;
+        let done = state.done_count();
+        let total = state.total_items();
         let ok = state.success_count();
         let fail = state.failure_count();
         let mut parts = vec![Span::styled(
@@ -179,6 +191,12 @@ fn draw_help_bar(frame: &mut Frame, area: Rect, state: &DownloadState) {
             }
             parts.push(Span::styled(")", Style::default().fg(Color::DarkGray)));
         }
+        parts.push(Span::raw("  "));
+        parts.push(Span::styled("Esc", Style::default().fg(Color::Yellow)));
+        parts.push(Span::styled(
+            " Cancel",
+            Style::default().fg(Color::DarkGray),
+        ));
         Line::from(parts)
     } else {
         Line::from(vec![

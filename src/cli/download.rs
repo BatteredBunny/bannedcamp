@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{
         Arc,
@@ -180,7 +180,7 @@ impl DownloadProgressReporter for CliProgressReporter {
 async fn cli_download(
     client: &BandcampClient,
     item: &LibraryItem,
-    output_dir: &PathBuf,
+    output_dir: &Path,
     format: AudioFormat,
     name_format: Option<&str>,
     progress: &MultiProgress,

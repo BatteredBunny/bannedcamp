@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -186,19 +186,21 @@ impl LibraryState {
     }
 }
 
-/// Individual item download result
-#[derive(Debug, Clone)]
-pub struct ItemDownloadResult {
-    pub item_id: String,
-    pub result: Result<PathBuf, String>,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum SlotStatus {
+pub enum DownloadItemStatus {
     #[default]
+    Pending,
     FetchingUrl,
     Downloading,
     Extracting,
+    Done(Result<PathBuf, String>),
+    Cancelled,
+}
+
+#[derive(Debug, Clone)]
+pub struct DownloadItem {
+    pub item: LibraryItem,
+    pub status: DownloadItemStatus,
 }
 
 /// Progress state for a single concurrent download slot
@@ -209,7 +211,7 @@ pub struct DownloadSlot {
     /// Item ID (for matching progress updates)
     pub item_id: Option<String>,
     /// Current phase of the download
-    pub status: SlotStatus,
+    pub status: DownloadItemStatus,
     /// Bytes downloaded
     pub downloaded: u64,
     /// Total bytes (if known)
@@ -253,18 +255,10 @@ pub const MAX_CONCURRENT_DOWNLOADS: usize = 3;
 /// Download progress state for batch downloads
 #[derive(Default)]
 pub struct DownloadState {
-    /// Ordered item IDs for display
-    pub item_order: Vec<String>,
-    /// Items indexed by ID
-    pub items: HashMap<String, LibraryItem>,
-    /// Total number of items
-    pub total_items: usize,
-    /// Number of items started (queued to slots)
-    pub started_count: usize,
+    /// All download items in order
+    pub queue: Vec<DownloadItem>,
     /// Whether download is active
     pub is_active: bool,
-    /// Results for completed items
-    pub results: Vec<ItemDownloadResult>,
     /// When the download started
     pub start_time: Option<Instant>,
     /// Concurrent download slots
@@ -274,27 +268,33 @@ pub struct DownloadState {
 }
 
 impl DownloadState {
+    pub fn total_items(&self) -> usize {
+        self.queue.len()
+    }
+
     pub fn success_count(&self) -> usize {
-        self.results.iter().filter(|r| r.result.is_ok()).count()
+        self.queue
+            .iter()
+            .filter(|i| matches!(i.status, DownloadItemStatus::Done(Ok(_))))
+            .count()
     }
 
     pub fn failure_count(&self) -> usize {
-        self.results.iter().filter(|r| r.result.is_err()).count()
+        self.queue
+            .iter()
+            .filter(|i| matches!(i.status, DownloadItemStatus::Done(Err(_))))
+            .count()
     }
 
-    /// Get total download speed across all slots
-    pub fn total_speed(&self) -> f64 {
-        self.slots.iter().map(|s| s.speed_bytes_per_sec).sum()
+    pub fn done_count(&self) -> usize {
+        self.queue
+            .iter()
+            .filter(|i| matches!(i.status, DownloadItemStatus::Done(_)))
+            .count()
     }
 
-    /// Get total bytes downloaded across all active slots
-    pub fn total_downloaded(&self) -> u64 {
-        self.slots.iter().map(|s| s.downloaded).sum()
-    }
-
-    /// Get number of active slots
-    pub fn active_slot_count(&self) -> usize {
-        self.slots.iter().filter(|s| s.item.is_some()).count()
+    pub fn find_item_mut(&mut self, item_id: &str) -> Option<&mut DownloadItem> {
+        self.queue.iter_mut().find(|i| i.item.id == item_id)
     }
 
     /// Find slot by item_id
@@ -406,21 +406,26 @@ impl App {
                     }
                 }
             }
-            AsyncResponse::BatchDownloadStarted { total_items } => {
-                self.download_state.total_items = total_items;
+            AsyncResponse::BatchDownloadStarted { .. } => {
                 self.download_state.is_active = true;
                 self.download_state.start_time = Some(Instant::now());
-                self.download_state.started_count = 0;
                 self.download_state.clear_all_slots();
             }
             AsyncResponse::ItemDownloadStarted {
                 item_id,
                 item_index: _,
             } => {
-                self.download_state.started_count += 1;
-                // Find the item first (before mutable borrow)
-                let item = self.download_state.items.get(&item_id).cloned();
-                // Find an empty slot and assign this item
+                // Update item status
+                if let Some(di) = self.download_state.find_item_mut(&item_id) {
+                    di.status = DownloadItemStatus::FetchingUrl;
+                }
+                // Find the item for the slot display
+                let item = self
+                    .download_state
+                    .queue
+                    .iter()
+                    .find(|i| i.item.id == item_id)
+                    .map(|i| i.item.clone());
                 if let Some(slot) = self.download_state.find_empty_slot() {
                     slot.item = item;
                     slot.item_id = Some(item_id);
@@ -432,6 +437,9 @@ impl App {
                 }
             }
             AsyncResponse::DownloadStatusUpdate { item_id, status } => {
+                if let Some(di) = self.download_state.find_item_mut(&item_id) {
+                    di.status = status.clone();
+                }
                 if let Some(slot) = self.download_state.find_slot_mut(&item_id) {
                     slot.status = status;
                 }
@@ -452,15 +460,22 @@ impl App {
                 item_index: _,
                 result,
             } => {
-                // Clear the slot
                 self.download_state.clear_slot(&item_id);
-                // Record the result
-                self.download_state
-                    .results
-                    .push(ItemDownloadResult { item_id, result });
+                if let Some(di) = self.download_state.find_item_mut(&item_id) {
+                    di.status = DownloadItemStatus::Done(result);
+                }
             }
             AsyncResponse::BatchDownloadComplete => {
                 self.download_state.is_active = false;
+                self.download_state.clear_all_slots();
+            }
+            AsyncResponse::DownloadsCancelled => {
+                self.download_state.is_active = false;
+                for di in &mut self.download_state.queue {
+                    if !matches!(di.status, DownloadItemStatus::Done(_)) {
+                        di.status = DownloadItemStatus::Cancelled;
+                    }
+                }
                 self.download_state.clear_all_slots();
             }
         }
@@ -590,13 +605,6 @@ impl App {
         self.library_state.focus = LibraryFocus::List;
     }
 
-    /// Retry fetching the library collection
-    pub fn library_retry_fetch(&mut self) {
-        self.library_state.error = None;
-        self.library_state.loading = true;
-        let _ = self.async_tx.try_send(AsyncRequest::FetchCollection);
-    }
-
     /// Clear all selections
     pub fn library_clear_selection(&mut self) {
         self.library_state.selected_items.clear();
@@ -645,8 +653,6 @@ impl App {
             return;
         }
 
-        let total_items = items.len();
-
         // Start the download
         let _ = self.async_tx.try_send(AsyncRequest::StartBatchDownload {
             items: items.clone(),
@@ -654,13 +660,15 @@ impl App {
             output_dir: self.output_dir.clone(),
         });
 
-        let item_order: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
-        let items_map: HashMap<String, LibraryItem> =
-            items.into_iter().map(|i| (i.id.clone(), i)).collect();
+        let queue = items
+            .into_iter()
+            .map(|item| DownloadItem {
+                item,
+                status: DownloadItemStatus::Pending,
+            })
+            .collect();
         self.download_state = DownloadState {
-            item_order,
-            items: items_map,
-            total_items,
+            queue,
             ..Default::default()
         };
 
@@ -669,6 +677,10 @@ impl App {
     }
 
     // Download screen actions
+    pub fn cancel_downloads(&mut self) {
+        let _ = self.async_tx.try_send(AsyncRequest::CancelDownloads);
+    }
+
     pub fn download_back_to_library(&mut self) {
         if !self.download_state.is_active {
             // Clear selections after download

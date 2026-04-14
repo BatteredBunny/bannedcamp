@@ -3,7 +3,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{Mutex, Semaphore, mpsc};
+use tokio::task::JoinHandle;
 use tracing::debug;
 
 use crate::core::auth::Credentials;
@@ -22,6 +23,7 @@ pub enum AsyncRequest {
         format: AudioFormat,
         output_dir: PathBuf,
     },
+    CancelDownloads,
 }
 
 /// Messages sent from the async runtime to the TUI
@@ -41,7 +43,7 @@ pub enum AsyncResponse {
     /// Download phase changed (fetching URL, downloading, extracting)
     DownloadStatusUpdate {
         item_id: String,
-        status: crate::tui::app::SlotStatus,
+        status: crate::tui::app::DownloadItemStatus,
     },
     /// Progress for current item
     DownloadProgress {
@@ -57,6 +59,8 @@ pub enum AsyncResponse {
     },
     /// Entire batch completed
     BatchDownloadComplete,
+    /// Downloads were cancelled
+    DownloadsCancelled,
 }
 
 /// Bridge between sync TUI and async operations
@@ -64,6 +68,8 @@ pub struct AsyncBridge {
     request_rx: mpsc::Receiver<AsyncRequest>,
     response_tx: mpsc::Sender<AsyncResponse>,
     client: Option<Arc<BandcampClient>>,
+    active_handles: Arc<Mutex<Vec<JoinHandle<()>>>>,
+    coordinator_handle: Option<JoinHandle<()>>,
 }
 
 impl AsyncBridge {
@@ -75,6 +81,8 @@ impl AsyncBridge {
             request_rx,
             response_tx,
             client: None,
+            active_handles: Arc::new(Mutex::new(Vec::new())),
+            coordinator_handle: None,
         }
     }
 
@@ -102,7 +110,20 @@ impl AsyncBridge {
                     format,
                     output_dir,
                 } => {
-                    self.handle_batch_download(items, format, output_dir).await;
+                    self.start_batch_download(items, format, output_dir).await;
+                }
+                AsyncRequest::CancelDownloads => {
+                    if let Some(handle) = self.coordinator_handle.take() {
+                        handle.abort();
+                    }
+                    let mut handles = self.active_handles.lock().await;
+                    for handle in handles.drain(..) {
+                        handle.abort();
+                    }
+                    let _ = self
+                        .response_tx
+                        .send(AsyncResponse::DownloadsCancelled)
+                        .await;
                 }
             }
         }
@@ -124,8 +145,8 @@ impl AsyncBridge {
         client.get_collection().await.map_err(|e| e.to_string())
     }
 
-    async fn handle_batch_download(
-        &self,
+    async fn start_batch_download(
+        &mut self,
         items: Vec<LibraryItem>,
         format: AudioFormat,
         output_dir: PathBuf,
@@ -160,33 +181,44 @@ impl AsyncBridge {
             }
         };
 
-        // Create semaphore for limiting concurrent downloads
-        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
-        let mut handles = Vec::new();
+        let active_handles = self.active_handles.clone();
+        let response_tx = self.response_tx.clone();
 
-        for (item_index, item) in items.into_iter().enumerate() {
-            let permit = semaphore.clone().acquire_owned().await.unwrap();
-            let client = client.clone();
-            let response_tx = self.response_tx.clone();
-            let output_dir = output_dir.clone();
+        self.coordinator_handle = Some(tokio::spawn(async move {
+            let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DOWNLOADS));
 
-            let handle = tokio::spawn(async move {
-                tui_download(client, response_tx, item, item_index, format, output_dir).await;
-                drop(permit);
-            });
+            for (item_index, item) in items.into_iter().enumerate() {
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+                let client = client.clone();
+                let response_tx = response_tx.clone();
+                let output_dir = output_dir.clone();
 
-            handles.push(handle);
-        }
+                let handle = tokio::spawn(async move {
+                    tui_download(client, response_tx, item, item_index, format, output_dir).await;
+                    drop(permit);
+                });
 
-        // Wait for all downloads to complete
-        for handle in handles {
-            let _ = handle.await;
-        }
+                active_handles.lock().await.push(handle);
+            }
 
-        let _ = self
-            .response_tx
-            .send(AsyncResponse::BatchDownloadComplete)
-            .await;
+            // Wait for all downloads by polling handles
+            loop {
+                let handle = {
+                    let mut handles = active_handles.lock().await;
+                    handles.retain(|h| !h.is_finished());
+                    if handles.is_empty() {
+                        break;
+                    }
+                    // We can't await while holding the lock, so just check periodically
+                    drop(handles);
+                    None::<()>
+                };
+                let _ = handle;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+
+            let _ = response_tx.send(AsyncResponse::BatchDownloadComplete).await;
+        }));
     }
 }
 
@@ -213,7 +245,7 @@ impl DownloadProgressReporter for TuiProgressReporter {
                 .response_tx
                 .send(AsyncResponse::DownloadStatusUpdate {
                     item_id: self.item_id.clone(),
-                    status: crate::tui::app::SlotStatus::Downloading,
+                    status: crate::tui::app::DownloadItemStatus::Downloading,
                 })
                 .await;
         })
@@ -225,7 +257,7 @@ impl DownloadProgressReporter for TuiProgressReporter {
                 .response_tx
                 .send(AsyncResponse::DownloadStatusUpdate {
                     item_id: self.item_id.clone(),
-                    status: crate::tui::app::SlotStatus::FetchingUrl,
+                    status: crate::tui::app::DownloadItemStatus::FetchingUrl,
                 })
                 .await;
         })
@@ -267,7 +299,7 @@ impl DownloadProgressReporter for TuiProgressReporter {
                 .response_tx
                 .send(AsyncResponse::DownloadStatusUpdate {
                     item_id: self.item_id.clone(),
-                    status: crate::tui::app::SlotStatus::Extracting,
+                    status: crate::tui::app::DownloadItemStatus::Extracting,
                 })
                 .await;
         })

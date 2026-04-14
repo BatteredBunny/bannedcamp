@@ -188,7 +188,9 @@ fn handle_download_keys(app: &mut App, key: crossterm::event::KeyEvent) {
 
     match key.code {
         Esc => {
-            if !app.download_state.is_active {
+            if app.download_state.is_active {
+                app.cancel_downloads();
+            } else {
                 app.quit();
             }
         }
