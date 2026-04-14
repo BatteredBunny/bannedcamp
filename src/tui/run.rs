@@ -2,7 +2,7 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
+use crate::error::Result;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyModifiers},
     execute,

@@ -102,14 +102,9 @@ impl BandcampClient {
         }
     }
 
-    fn auth_headers(&self) -> Result<HeaderMap> {
-        let creds = self
-            .credentials
-            .as_ref()
-            .ok_or(BandcampError::NotLoggedIn)?;
-
+    fn cookie_headers(identity_cookie: &str) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
-        let cookie_value = format!("identity={}", creds.identity_cookie);
+        let cookie_value = format!("identity={identity_cookie}");
         headers.insert(
             COOKIE,
             HeaderValue::from_str(&cookie_value)
@@ -118,22 +113,22 @@ impl BandcampClient {
         Ok(headers)
     }
 
+    fn auth_headers(&self) -> Result<HeaderMap> {
+        let creds = self
+            .credentials
+            .as_ref()
+            .ok_or(BandcampError::NotLoggedIn)?;
+        Self::cookie_headers(&creds.identity_cookie)
+    }
+
     pub async fn fetch_collection_summary(
         &self,
         identity_cookie: &str,
     ) -> Result<CollectionSummary> {
-        let mut headers = HeaderMap::new();
-        let cookie_value = format!("identity={identity_cookie}");
-        headers.insert(
-            COOKIE,
-            HeaderValue::from_str(&cookie_value)
-                .map_err(|e| BandcampError::AuthError(e.to_string()))?,
-        );
-
         let response = self
             .http
             .get(format!("{BANDCAMP_BASE}/api/fan/2/collection_summary"))
-            .headers(headers.clone())
+            .headers(Self::cookie_headers(identity_cookie)?)
             .send()
             .await?;
 
@@ -190,7 +185,10 @@ impl BandcampClient {
 
         info!("Cookie validated, fan_id: {}", summary.fan_id);
 
-        let credentials = Credentials::new(identity_cookie.to_string(), summary.fan_id);
+        let credentials = Credentials {
+            identity_cookie: identity_cookie.to_string(),
+            fan_id: summary.fan_id,
+        };
 
         self.credentials = Some(credentials.clone());
         Ok(credentials)
@@ -456,18 +454,12 @@ impl BandcampClient {
             html.len()
         );
 
-        // Method 1: Look for <div id="pagedata" data-blob="...">
-        // This is the primary method used by Bandcamp download pages
-        if let Some(url) = self.extract_from_pagedata(html, format_str)? {
+        // Method 1: Extract from data-blob attributes (pagedata div first, then all blobs)
+        if let Some(url) = self.extract_from_data_blobs(html, format_str)? {
             return Ok(url);
         }
 
-        // Method 2: Look for data-blob attribute on other elements
-        if let Some(url) = self.extract_from_data_blob(html, format_str)? {
-            return Ok(url);
-        }
-
-        // Method 3: Look for TralbumData in script tags (older pages)
+        // Method 2: Look for TralbumData in script tags (older pages)
         if let Some(url) = self.extract_from_tralbum_data(html, format_str)? {
             return Ok(url);
         }
@@ -482,54 +474,33 @@ impl BandcampClient {
         )))
     }
 
-    /// Extract download URL from pagedata div
-    fn extract_from_pagedata(&self, html: &str, format: &str) -> Result<Option<String>> {
-        // Look for <div id="pagedata" data-blob="...">
-        // or <div id='pagedata' data-blob='...'>
-        let pagedata_patterns = [
+    /// Extract download URL from data-blob attributes in the HTML.
+    /// Tries the pagedata div first, then scans all other data-blobs.
+    fn extract_from_data_blobs(&self, html: &str, format: &str) -> Result<Option<String>> {
+        let blob_patterns = ["data-blob=\"", "data-blob='"];
+
+        // Pagedata div anchors to try first (most specific to least)
+        let pagedata_anchors = [
             r#"<div id="pagedata""#,
             r#"<div id='pagedata'"#,
             r#"id="pagedata""#,
         ];
 
-        for pattern in pagedata_patterns {
-            if let Some(div_pos) = html.find(pattern) {
+        // Method 1: Try pagedata div specifically
+        for anchor in pagedata_anchors {
+            if let Some(div_pos) = html.find(anchor) {
                 debug!("Found pagedata div at position {div_pos}");
+                let search_end = (html[div_pos..].find('>').unwrap_or(2000) + div_pos).min(html.len());
+                let div_tag = &html[div_pos..search_end];
 
-                // Find data-blob attribute
-                let search_start = div_pos;
-                let search_end = html[search_start..].find('>').unwrap_or(2000) + search_start;
-                let div_tag = &html[search_start..search_end];
-
-                if let Some(blob_start) = div_tag.find("data-blob=") {
-                    let quote_char = div_tag.chars().nth(blob_start + 10).unwrap_or('"');
-                    let blob_content_start = blob_start + 11; // Skip 'data-blob="' or "data-blob='"
-
-                    if let Some(blob_end) = div_tag[blob_content_start..].find(quote_char) {
-                        let blob = &div_tag[blob_content_start..blob_content_start + blob_end];
-
-                        // Unescape HTML entities
-                        let unescaped = self.unescape_html(blob);
-                        debug!("Pagedata blob length: {} chars", unescaped.len());
-
-                        // Parse as JSON and extract download URL
-                        if let Some(url) = self.extract_url_from_json(&unescaped, format) {
-                            return Ok(Some(url));
-                        }
-                    }
+                if let Some(url) = self.try_extract_blob(div_tag, format) {
+                    return Ok(Some(url));
                 }
             }
         }
 
-        Ok(None)
-    }
-
-    /// Extract download URL from any data-blob attribute
-    fn extract_from_data_blob(&self, html: &str, format: &str) -> Result<Option<String>> {
-        // Look for data-blob containing digital_items or downloads
-        let patterns = ["data-blob=\"", "data-blob='"];
-
-        for pattern in patterns {
+        // Method 2: Scan all data-blob attributes for ones with download info
+        for pattern in blob_patterns {
             let quote_char = if pattern.ends_with('"') { '"' } else { '\'' };
             let mut search_pos = 0;
 
@@ -538,13 +509,9 @@ impl BandcampClient {
                 if let Some(blob_end) = html[actual_start..].find(quote_char) {
                     let blob = &html[actual_start..actual_start + blob_end];
 
-                    // Check if this blob contains download info
                     if blob.contains("digital_items") || blob.contains("downloads") {
                         let unescaped = self.unescape_html(blob);
-                        debug!(
-                            "Found data-blob with download info ({} chars)",
-                            unescaped.len()
-                        );
+                        debug!("Found data-blob with download info ({} chars)", unescaped.len());
 
                         if let Some(url) = self.extract_url_from_json(&unescaped, format) {
                             return Ok(Some(url));
@@ -558,6 +525,19 @@ impl BandcampClient {
         }
 
         Ok(None)
+    }
+
+    /// Try to extract a data-blob attribute value from an HTML tag and parse a download URL from it
+    fn try_extract_blob(&self, tag: &str, format: &str) -> Option<String> {
+        let blob_start = tag.find("data-blob=")?;
+        let quote_char = tag.as_bytes().get(blob_start + 10).copied().unwrap_or(b'"') as char;
+        let content_start = blob_start + 11;
+        let blob_end = tag[content_start..].find(quote_char)?;
+        let blob = &tag[content_start..content_start + blob_end];
+
+        let unescaped = self.unescape_html(blob);
+        debug!("Data blob length: {} chars", unescaped.len());
+        self.extract_url_from_json(&unescaped, format)
     }
 
     /// Extract download URL from TralbumData in script tags
@@ -723,18 +703,47 @@ impl BandcampClient {
 
     /// Unescape HTML entities in a string
     fn unescape_html(&self, s: &str) -> String {
-        // &amp; must be replaced last to avoid double-unescaping
-        // (e.g. &amp;lt; -> &lt; -> < if &amp; is replaced first)
-        s.replace("&quot;", "\"")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&#39;", "'")
-            .replace("&apos;", "'")
-            .replace("&#x27;", "'")
-            .replace("&#x2F;", "/")
-            .replace("\\u0026", "&")
-            .replace("\\/", "/")
-            .replace("&amp;", "&")
+        const ENTITIES: &[(&str, char)] = &[
+            ("&quot;", '"'),
+            ("&lt;", '<'),
+            ("&gt;", '>'),
+            ("&#39;", '\''),
+            ("&apos;", '\''),
+            ("&#x27;", '\''),
+            ("&#x2F;", '/'),
+            // &amp; must be last to avoid double-unescaping (e.g. &amp;lt; -> &lt; -> <)
+            ("&amp;", '&'),
+        ];
+
+        const ESCAPES: &[(&str, char)] = &[("\\u0026", '&'), ("\\/", '/')];
+
+        let mut result = String::with_capacity(s.len());
+        let mut remainder = s;
+
+        while !remainder.is_empty() {
+            let matched = match remainder.as_bytes()[0] {
+                b'&' => ENTITIES
+                    .iter()
+                    .find(|(pat, _)| remainder.starts_with(pat))
+                    .map(|&(pat, ch)| (pat.len(), ch)),
+                b'\\' => ESCAPES
+                    .iter()
+                    .find(|(pat, _)| remainder.starts_with(pat))
+                    .map(|&(pat, ch)| (pat.len(), ch)),
+                _ => None,
+            };
+
+            if let Some((skip, ch)) = matched {
+                result.push(ch);
+                remainder = &remainder[skip..];
+            } else {
+                let ch = remainder.chars().next().unwrap();
+                result.push(ch);
+                remainder = &remainder[ch.len_utf8()..];
+            }
+        }
+
+        result
     }
 }
 

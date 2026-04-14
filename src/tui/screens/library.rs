@@ -16,9 +16,9 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LibraryState) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // Search bar
-            Constraint::Length(2), // Header
+            Constraint::Length(1), // Header
             Constraint::Min(5),    // List
-            Constraint::Length(2), // Help bar
+            Constraint::Length(1), // Help bar
         ])
         .split(area);
 
@@ -109,10 +109,9 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LibraryState) {
     };
 
     let visible_count = state.visible_count();
-    let visible_range = state.visible_items_range(scroll_offset, visible_height);
-    let items: Vec<ListItem> = visible_range
-        .iter()
-        .map(|&(display_idx, _, item)| {
+    let items: Vec<ListItem> = state
+        .visible_items_range(scroll_offset, visible_height)
+        .map(|(display_idx, _, item)| {
             let is_highlighted = display_idx == state.selected;
             let is_selected = state.selected_items.contains(&item.id);
 

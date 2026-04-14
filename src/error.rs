@@ -5,9 +5,6 @@ pub enum BandcampError {
     #[error("Authentication failed: {0}")]
     AuthError(String),
 
-    #[error("Invalid credentials")]
-    InvalidCredentials,
-
     #[error("Not logged in")]
     NotLoggedIn,
 

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use bannedcamp::error::Result;
 use clap::Parser;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 

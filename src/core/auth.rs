@@ -6,11 +6,3 @@ pub struct Credentials {
     pub fan_id: u64,
 }
 
-impl Credentials {
-    pub fn new(identity_cookie: String, fan_id: u64) -> Self {
-        Self {
-            identity_cookie,
-            fan_id,
-        }
-    }
-}

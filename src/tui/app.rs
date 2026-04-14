@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 use tokio::sync::mpsc;
@@ -58,7 +58,6 @@ pub enum LibraryFocus {
 /// Library browser state
 pub struct LibraryState {
     pub items: Vec<LibraryItem>,
-    search_index: Vec<(String, String)>,
     /// Indices of items matching current search (empty = show all)
     pub filtered_indices: Vec<usize>,
     /// Current position in filtered list
@@ -83,7 +82,6 @@ impl Default for LibraryState {
     fn default() -> Self {
         Self {
             items: Vec::new(),
-            search_index: Vec::new(),
             filtered_indices: Vec::new(),
             selected: 0,
             scroll_offset: 0,
@@ -101,11 +99,8 @@ impl Default for LibraryState {
 
 impl LibraryState {
     pub fn set_items(&mut self, items: Vec<LibraryItem>) {
-        self.search_index = items
-            .iter()
-            .map(|item| (item.artist.to_lowercase(), item.title.to_lowercase()))
-            .collect();
         self.items = items;
+        self.update_filter();
     }
 
     pub fn visible_item_at(&self, index: usize) -> Option<(usize, &LibraryItem)> {
@@ -122,25 +117,27 @@ impl LibraryState {
         &self,
         skip: usize,
         take: usize,
-    ) -> Vec<(usize, usize, &LibraryItem)> {
+    ) -> Box<dyn Iterator<Item = (usize, usize, &LibraryItem)> + '_> {
         if self.search_query.is_empty() {
-            self.items
-                .iter()
-                .enumerate()
-                .skip(skip)
-                .take(take)
-                .map(|(i, item)| (i, i, item))
-                .collect()
+            Box::new(
+                self.items
+                    .iter()
+                    .enumerate()
+                    .skip(skip)
+                    .take(take)
+                    .map(|(i, item)| (i, i, item)),
+            )
         } else {
-            self.filtered_indices
-                .iter()
-                .enumerate()
-                .skip(skip)
-                .take(take)
-                .filter_map(|(display_idx, &i)| {
-                    self.items.get(i).map(|item| (display_idx, i, item))
-                })
-                .collect()
+            Box::new(
+                self.filtered_indices
+                    .iter()
+                    .enumerate()
+                    .skip(skip)
+                    .take(take)
+                    .filter_map(|(display_idx, &i)| {
+                        self.items.get(i).map(|item| (display_idx, i, item))
+                    }),
+            )
         }
     }
 
@@ -165,11 +162,12 @@ impl LibraryState {
         } else {
             let query = self.search_query.to_lowercase();
             self.filtered_indices = self
-                .search_index
+                .items
                 .iter()
                 .enumerate()
-                .filter(|(_, (artist, title))| {
-                    artist.contains(&query) || title.contains(&query)
+                .filter(|(_, item)| {
+                    item.artist.to_lowercase().contains(&query)
+                        || item.title.to_lowercase().contains(&query)
                 })
                 .map(|(i, _)| i)
                 .collect();
@@ -243,8 +241,10 @@ pub const MAX_CONCURRENT_DOWNLOADS: usize = 3;
 /// Download progress state for batch downloads
 #[derive(Default)]
 pub struct DownloadState {
-    /// Items queued for download
-    pub items: Vec<LibraryItem>,
+    /// Ordered item IDs for display
+    pub item_order: Vec<String>,
+    /// Items indexed by ID
+    pub items: HashMap<String, LibraryItem>,
     /// Total number of items
     pub total_items: usize,
     /// Number of items started (queued to slots)
@@ -293,6 +293,13 @@ impl DownloadState {
     /// Find first empty slot
     pub fn find_empty_slot(&mut self) -> Option<&mut DownloadSlot> {
         self.slots.iter_mut().find(|s| s.item.is_none())
+    }
+
+    /// Clear all download slots
+    pub fn clear_all_slots(&mut self) {
+        for slot in &mut self.slots {
+            *slot = DownloadSlot::default();
+        }
     }
 
     /// Clear a slot by item_id
@@ -387,10 +394,7 @@ impl App {
                 self.download_state.is_active = true;
                 self.download_state.start_time = Some(Instant::now());
                 self.download_state.started_count = 0;
-                // Clear all slots
-                for slot in &mut self.download_state.slots {
-                    *slot = DownloadSlot::default();
-                }
+                self.download_state.clear_all_slots();
             }
             AsyncResponse::ItemDownloadStarted {
                 item_id,
@@ -398,12 +402,7 @@ impl App {
             } => {
                 self.download_state.started_count += 1;
                 // Find the item first (before mutable borrow)
-                let item = self
-                    .download_state
-                    .items
-                    .iter()
-                    .find(|i| i.id == item_id)
-                    .cloned();
+                let item = self.download_state.items.get(&item_id).cloned();
                 // Find an empty slot and assign this item
                 if let Some(slot) = self.download_state.find_empty_slot() {
                     slot.item = item;
@@ -440,10 +439,7 @@ impl App {
             }
             AsyncResponse::BatchDownloadComplete => {
                 self.download_state.is_active = false;
-                // Clear all slots
-                for slot in &mut self.download_state.slots {
-                    *slot = DownloadSlot::default();
-                }
+                self.download_state.clear_all_slots();
             }
         }
     }
@@ -520,9 +516,9 @@ impl App {
     /// Select all visible items (respects current filter)
     pub fn library_select_all(&mut self) {
         if self.library_state.search_query.is_empty() {
-            self.library_state.selected_items.extend(
-                self.library_state.items.iter().map(|item| item.id.clone()),
-            );
+            self.library_state
+                .selected_items
+                .extend(self.library_state.items.iter().map(|item| item.id.clone()));
         } else {
             let ids: Vec<String> = self
                 .library_state
@@ -625,8 +621,12 @@ impl App {
             output_dir: self.output_dir.clone(),
         });
 
+        let item_order: Vec<String> = items.iter().map(|i| i.id.clone()).collect();
+        let items_map: HashMap<String, LibraryItem> =
+            items.into_iter().map(|i| (i.id.clone(), i)).collect();
         self.download_state = DownloadState {
-            items,
+            item_order,
+            items: items_map,
             total_items,
             ..Default::default()
         };

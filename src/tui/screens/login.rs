@@ -24,7 +24,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LoginState) {
         .split(area);
 
     // Title
-    let title = Paragraph::new("Bandcamp Downloader")
+    let title = Paragraph::new("Bannedcamp")
         .style(
             Style::default()
                 .fg(Color::Cyan)

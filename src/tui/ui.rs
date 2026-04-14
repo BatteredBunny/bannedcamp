@@ -22,7 +22,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Outer frame
     let main_block = Block::default()
-        .title(" Bandcamp Downloader ")
+        .title(" Bannedcamp ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
 

@@ -31,19 +31,22 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &DownloadState) {
 fn draw_download_list(frame: &mut Frame, area: Rect, state: &DownloadState) {
     let mut items: Vec<ListItem> = Vec::new();
 
-    for item in &state.items {
+    for id in &state.item_order {
+        let Some(item) = state.items.get(id) else {
+            continue;
+        };
         let display_name = format!("{} - {}", item.artist, item.title);
 
         if let Some(slot) = state
             .slots
             .iter()
-            .find(|s| s.item_id.as_deref() == Some(&item.id))
+            .find(|s| s.item_id.as_deref() == Some(id.as_str()))
         {
             items.push(create_progress_item(&display_name, slot, area.width));
             continue;
         }
 
-        if let Some(result) = state.results.iter().find(|r| r.item_id == item.id) {
+        if let Some(result) = state.results.iter().find(|r| r.item_id == *id) {
             let (icon, style, suffix) = match &result.result {
                 Ok(_) => ("✓", Style::default().fg(Color::Green), String::new()),
                 Err(e) => ("✗", Style::default().fg(Color::Red), format!(" - {}", e)),

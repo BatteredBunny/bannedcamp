@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use anyhow::Result;
+use crate::error::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use tracing::info;
 
@@ -11,7 +11,9 @@ use crate::core::library::LibraryItem;
 
 pub async fn run_download(args: DownloadArgs) -> Result<()> {
     let cookie = args.cookie.ok_or_else(|| {
-        anyhow::anyhow!("No cookie provided. Set --cookie flag or BANDCAMP_COOKIE env var")
+        crate::error::BandcampError::AuthError(
+            "No cookie provided. Set --cookie flag or BANDCAMP_COOKIE env var".to_string(),
+        )
     })?;
 
     let mut client = BandcampClient::new();

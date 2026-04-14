@@ -1,7 +1,7 @@
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use futures::StreamExt;
+use tokio_stream::StreamExt;
 use std::future::Future;
 use std::pin::Pin;
 use tracing::{debug, info};
@@ -91,7 +91,7 @@ pub async fn download_item<P: DownloadProgressReporter>(
     // Create temporary file
     let temp_path = output_dir.join(format!(".{}.tmp", item.id));
     std::fs::create_dir_all(output_dir)?;
-    let mut file = std::fs::File::create(&temp_path)?;
+    let mut file = BufWriter::new(std::fs::File::create(&temp_path)?);
 
     // Download with progress reporting
     let mut downloaded: u64 = 0;

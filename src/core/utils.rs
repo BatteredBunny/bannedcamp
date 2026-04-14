@@ -16,10 +16,11 @@ pub fn format_bytes(bytes: f64) -> String {
 
 /// Truncate a string
 pub fn truncate_str(s: &str, max_chars: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() > max_chars {
-        let truncated: String = chars[..max_chars.saturating_sub(3)].iter().collect();
-        format!("{}...", truncated)
+    let char_count = s.chars().count();
+    if char_count > max_chars {
+        let mut result: String = s.chars().take(max_chars.saturating_sub(3)).collect();
+        result.push_str("...");
+        result
     } else {
         s.to_string()
     }
