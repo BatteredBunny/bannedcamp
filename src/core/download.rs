@@ -164,5 +164,27 @@ pub fn extract_zip(zip_path: &Path, output_dir: &Path) -> Result<()> {
         .extract(output_dir)
         .map_err(|e| BandcampError::DownloadError(format!("ZIP extraction failed: {e}")))?;
 
+    fix_permissions(output_dir)?;
+
+    Ok(())
+}
+
+/// Recursively resets permissions to 0755 for directories and 0644 for files.
+fn fix_permissions(path: &Path) -> Result<()> {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            std::fs::set_permissions(entry.path(), Permissions::from_mode(0o755))?;
+            fix_permissions(&entry.path())?;
+        } else {
+            std::fs::set_permissions(entry.path(), Permissions::from_mode(0o644))?;
+        }
+    }
+
     Ok(())
 }
