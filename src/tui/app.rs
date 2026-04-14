@@ -22,6 +22,7 @@ pub struct LoginState {
     pub loading: bool,
     pub spinner: Spinner,
     pub error: Option<String>,
+    pub cookie_visible: bool,
 }
 
 impl Default for LoginState {
@@ -35,6 +36,7 @@ impl Default for LoginState {
             loading: false,
             spinner: Spinner::default(),
             error: None,
+            cookie_visible: false,
         }
     }
 }
@@ -465,6 +467,10 @@ impl App {
     }
 
     // Login screen actions
+    pub fn login_toggle_cookie_visibility(&mut self) {
+        self.login_state.cookie_visible = !self.login_state.cookie_visible;
+    }
+
     pub fn login_input_char(&mut self, c: char) {
         let byte_pos = self
             .login_state
@@ -582,6 +588,13 @@ impl App {
         self.library_state.search_query.clear();
         self.library_state.update_filter();
         self.library_state.focus = LibraryFocus::List;
+    }
+
+    /// Retry fetching the library collection
+    pub fn library_retry_fetch(&mut self) {
+        self.library_state.error = None;
+        self.library_state.loading = true;
+        let _ = self.async_tx.try_send(AsyncRequest::FetchCollection);
     }
 
     /// Clear all selections

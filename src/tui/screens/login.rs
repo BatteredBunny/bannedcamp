@@ -73,7 +73,11 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LoginState) {
         Style::default()
     };
 
-    let display_text = state.cookie_input.clone();
+    let display_text = if state.cookie_visible {
+        state.cookie_input.clone()
+    } else {
+        "\u{2022}".repeat(state.cookie_input.chars().count())
+    };
 
     let display_len = display_text.chars().count();
     let input = Paragraph::new(display_text).style(input_style).block(
@@ -103,13 +107,23 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &LoginState) {
     } else if state.loading {
         vec![]
     } else {
-        vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                "Enter Submit  Esc Quit",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ]
+        {
+            let visibility_label = if state.cookie_visible { "Hide" } else { "Show" };
+            vec![
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("Enter", Style::default().fg(Color::Yellow)),
+                    Span::styled(" Submit  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("Ctrl+R", Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!(" {visibility_label}  "),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled("Esc", Style::default().fg(Color::Yellow)),
+                    Span::styled(" Quit", Style::default().fg(Color::DarkGray)),
+                ]),
+            ]
+        }
     };
     let status = Paragraph::new(status_text).alignment(ratatui::layout::Alignment::Center);
     frame.render_widget(status, chunks[5]);

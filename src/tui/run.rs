@@ -109,6 +109,11 @@ fn handle_login_keys(app: &mut App, key: crossterm::event::KeyEvent) {
         return; // Ignore input while loading
     }
 
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == Char('r') {
+        app.login_toggle_cookie_visibility();
+        return;
+    }
+
     match key.code {
         Char(c) => app.login_input_char(c),
         Backspace => app.login_delete_char(),
